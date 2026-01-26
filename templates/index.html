@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nexus Académico</title>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <title>Nexus Académico 2.0</title>
     
-    <!-- Configuración de MathJax para ecuaciones matemáticas -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
         window.MathJax = {
             tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] }
@@ -18,37 +19,84 @@
 </head>
 <body>
 
-    <header>
-        <h1>NEXUS ACADÉMICO</h1>
-        <p style="font-size: 0.9rem; color: #8b949e;">Tu asistente inteligente de aprendizaje</p>
-    </header>
-
-    <div id="chat-container">
+    <div class="app-container">
         
-        <div id="subject-bar">
-            <button class="subject-btn" onclick="seleccionarMateria('Matemáticas')">📐 Matemáticas</button>
-            <button class="subject-btn" onclick="seleccionarMateria('Historia')">📜 Historia</button>
-            <button class="subject-btn" onclick="seleccionarMateria('Ciencias')">🧬 Ciencias</button>
-            <button class="subject-btn" onclick="seleccionarMateria('Lenguaje')">📖 Lenguaje</button>
-            <button class="subject-btn" onclick="seleccionarMateria('Inglés')">🇬🇧 Inglés</button>
-        </div>
-
-        <div id="chat-box">
-            <div class="message bot-msg">
-                Hola, soy Nexus. Elige una materia o escribe tu pregunta para empezar.
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <i class="fas fa-brain logo-icon"></i>
+                <h2>NEXUS</h2>
+                <button id="close-sidebar-btn" onclick="toggleSidebar()">
+                    <i class="fas fa-times"></i>
+                </button>
             </div>
-        </div>
 
-        <!-- Indicador de carga (oculto por defecto) -->
-        <div id="loading-indicator" class="hidden">
-            <span>Nexus está pensando</span>
-            <span class="dots">...</span>
-        </div>
+            <div class="search-box">
+                <i class="fas fa-search"></i>
+                <input type="text" id="subject-search" placeholder="Buscar materia..." onkeyup="filtrarMaterias()">
+            </div>
 
-        <div id="input-area">
-            <input type="text" id="user-input" placeholder="Escribe tu pregunta aquí...">
-            <button onclick="enviarMensaje()">Enviar</button>
-        </div>
+            <div class="subject-list" id="subject-list">
+                <p class="section-title">MATERIAS</p>
+                
+                <button class="nav-btn" onclick="seleccionarMateria('Matemáticas')">
+                    <i class="fas fa-calculator"></i> Matemáticas
+                </button>
+                <button class="nav-btn" onclick="seleccionarMateria('Historia')">
+                    <i class="fas fa-landmark"></i> Historia
+                </button>
+                <button class="nav-btn" onclick="seleccionarMateria('Ciencias')">
+                    <i class="fas fa-flask"></i> Ciencias
+                </button>
+                <button class="nav-btn" onclick="seleccionarMateria('Lenguaje')">
+                    <i class="fas fa-book-open"></i> Lenguaje
+                </button>
+                <button class="nav-btn" onclick="seleccionarMateria('Inglés')">
+                    <i class="fas fa-language"></i> Inglés
+                </button>
+                <button class="nav-btn" onclick="seleccionarMateria('Programación')">
+                    <i class="fas fa-code"></i> Programación
+                </button>
+            </div>
+
+            <div class="sidebar-footer">
+                <button class="nav-btn secondary" onclick="toggleTheme()">
+                    <i class="fas fa-moon"></i> Modo Oscuro
+                </button>
+            </div>
+        </aside>
+
+        <main class="chat-area">
+            <header class="chat-header">
+            <button id="menu-btn" onclick="toggleSidebar()">
+                <i class="fas fa-bars"></i>
+            </button>
+            
+            <h3>Asistente Virtual</h3>
+            <span class="status-dot"></span>
+        </header>
+
+            <div id="chat-box">
+                <div class="message bot-msg">
+                    <div class="msg-content">
+                        ¡Hola! Soy <strong>Nexus</strong>. Selecciona una materia del menú lateral para comenzar.
+                    </div>
+                </div>
+            </div>
+
+            <div id="loading-indicator" class="hidden">
+                <i class="fas fa-circle-notch fa-spin"></i> Nexus está pensando...
+            </div>
+
+            <div id="input-area">
+                <input type="text" id="user-input" placeholder="Escribe tu pregunta aquí...">
+                <button onclick="enviarMensaje()">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </main>
+
+        <div id="overlay" onclick="toggleSidebar()"></div>
+        
     </div>
 
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>

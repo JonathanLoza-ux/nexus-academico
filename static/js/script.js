@@ -80,3 +80,63 @@ document.getElementById("user-input").addEventListener("keypress", function(even
         enviarMensaje();
     }
 });
+
+// Función para abrir/cerrar el menú en celular
+function toggleSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    const overlay = document.getElementById('overlay');
+    
+    // Activar/Desactivar ambos
+    sidebar.classList.toggle('active');
+    overlay.classList.toggle('active');
+}
+
+/* --- BUSCADOR DE MATERIAS --- */
+function filtrarMaterias() {
+    // 1. Obtener texto del buscador
+    const input = document.getElementById('subject-search');
+    const filtro = input.value.toLowerCase();
+    
+    // 2. Obtener todos los botones de materias (excluyendo el de modo oscuro)
+    const lista = document.getElementById('subject-list');
+    const botones = lista.getElementsByClassName('nav-btn');
+
+    // 3. Recorrer y ocultar/mostrar
+    for (let i = 0; i < botones.length; i++) {
+        const textoboton = botones[i].textContent || botones[i].innerText;
+        
+        if (textoboton.toLowerCase().indexOf(filtro) > -1) {
+            botones[i].style.display = ""; // Mostrar
+        } else {
+            botones[i].style.display = "none"; // Ocultar
+        }
+    }
+}
+
+/* --- MODO CLARO / OSCURO --- */
+function toggleTheme() {
+    const body = document.body;
+    const icon = document.querySelector('.sidebar-footer i'); // El icono de la luna
+    const btnText = document.querySelector('.sidebar-footer .nav-btn'); // El texto del botón
+
+    // Alternar la clase en el cuerpo
+    body.classList.toggle('light-mode');
+
+    // Cambiar el icono y texto según el estado
+    if (body.classList.contains('light-mode')) {
+        icon.classList.remove('fa-moon');
+        icon.classList.add('fa-sun'); // Cambiar a Sol
+        // Opcional: cambiar texto si quieres
+        // btnText.innerHTML = '<i class="fas fa-sun"></i> Modo Claro';
+    } else {
+        icon.classList.remove('fa-sun');
+        icon.classList.add('fa-moon'); // Cambiar a Luna
+    }
+}
+
+// Opcional: Cerrar el menú automáticamente cuando elijes una materia (para que no estorbe)
+// Busca tu función existente 'seleccionarMateria' y agrégale esto al final:
+/*
+    const sidebar = document.querySelector('.sidebar');
+    sidebar.classList.remove('active');
+*/
