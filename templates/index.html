@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus Académico</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <!-- Configuración de MathJax para ecuaciones matemáticas -->
+    <script>
+        window.MathJax = {
+            tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] }
+        };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+    
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+    <header>
+        <h1>NEXUS ACADÉMICO</h1>
+        <p style="font-size: 0.9rem; color: #8b949e;">Tu asistente inteligente de aprendizaje</p>
+    </header>
+
+    <div id="chat-container">
+        
+        <div id="subject-bar">
+            <button class="subject-btn" onclick="seleccionarMateria('Matemáticas')">📐 Matemáticas</button>
+            <button class="subject-btn" onclick="seleccionarMateria('Historia')">📜 Historia</button>
+            <button class="subject-btn" onclick="seleccionarMateria('Ciencias')">🧬 Ciencias</button>
+            <button class="subject-btn" onclick="seleccionarMateria('Lenguaje')">📖 Lenguaje</button>
+            <button class="subject-btn" onclick="seleccionarMateria('Inglés')">🇬🇧 Inglés</button>
+        </div>
+
+        <div id="chat-box">
+            <div class="message bot-msg">
+                Hola, soy Nexus. Elige una materia o escribe tu pregunta para empezar.
+            </div>
+        </div>
+
+        <!-- Indicador de carga (oculto por defecto) -->
+        <div id="loading-indicator" class="hidden">
+            <span>Nexus está pensando</span>
+            <span class="dots">...</span>
+        </div>
+
+        <div id="input-area">
+            <input type="text" id="user-input" placeholder="Escribe tu pregunta aquí...">
+            <button onclick="enviarMensaje()">Enviar</button>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>

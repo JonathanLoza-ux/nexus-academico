@@ -1,0 +1,208 @@
+/* style.css - Diseño Nexus Académico */
+body {
+    background-color: #0d1117; /* Fondo muy oscuro, casi negro */
+    color: #e6edf3; /* Texto blanco suave */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* Encabezado */
+header {
+    background-color: #161b22;
+    padding: 20px;
+    text-align: center;
+    border-bottom: 2px solid #238636; /* Línea verde neón sutil */
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+}
+
+header h1 {
+    margin: 0;
+    font-size: 1.8rem;
+    letter-spacing: 1px;
+    background: linear-gradient(90deg, #2effa6, #00d4ff); /* Gradiente cian */
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Contenedor del Chat */
+#chat-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    max-width: 900px;
+    margin: 20px auto;
+    width: 95%;
+    background-color: #161b22;
+    border-radius: 15px;
+    overflow: hidden;
+    border: 1px solid #30363d;
+}
+
+#chat-box {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto; /* Permite hacer scroll */
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+/* Mensajes */
+.message {
+    padding: 12px 18px;
+    border-radius: 10px;
+    max-width: 80%;
+    line-height: 1.5;
+}
+
+.user-msg {
+    align-self: flex-end; /* A la derecha */
+    background-color: #238636; /* Verde GitHub/Tech */
+    color: white;
+}
+
+.bot-msg {
+    align-self: flex-start; /* A la izquierda */
+    background-color: #21262d; /* Gris oscuro */
+    color: #c9d1d9;
+    border: 1px solid #30363d;
+}
+
+/* Área de escribir */
+#input-area {
+    padding: 20px;
+    background-color: #0d1117;
+    display: flex;
+    gap: 10px;
+    border-top: 1px solid #30363d;
+}
+
+input {
+    flex: 1;
+    padding: 15px;
+    border-radius: 25px;
+    border: 1px solid #30363d;
+    background-color: #0d1117;
+    color: white;
+    outline: none;
+    font-size: 1rem;
+}
+
+input:focus {
+    border-color: #2effa6; /* Brillo verde al escribir */
+}
+
+button {
+    padding: 10px 25px;
+    border-radius: 25px;
+    border: none;
+    background: linear-gradient(90deg, #238636, #2ea043);
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+button:hover {
+    transform: scale(1.05); /* Efecto zoom al pasar el mouse */
+}
+
+/* Barra de materias */
+#subject-bar {
+    display: flex;
+    gap: 10px;
+    padding: 15px;
+    background-color: #161b22;
+    overflow-x: auto; /* Permite deslizar si hay muchos botones en celular */
+    border-bottom: 1px solid #30363d;
+}
+
+.subject-btn {
+    background-color: #21262d;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    padding: 8px 15px;
+    border-radius: 20px;
+    font-size: 0.9rem;
+    white-space: nowrap; /* Que el texto no se rompa */
+    transition: all 0.3s ease;
+}
+
+.subject-btn:hover {
+    background-color: #388bfd; /* Azul brillante al pasar el mouse */
+    color: white;
+    border-color: #388bfd;
+    transform: translateY(-2px); /* Efecto de "saltar" un poquito */
+}
+
+/* --- ESTILOS PARA EL TEXTO FORMATEADO (MARKDOWN) --- */
+
+/* Tablas */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 15px 0;
+    background-color: #1e252e; /* Fondo un poco más claro que el chat */
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+th, td {
+    padding: 12px;
+    border-bottom: 1px solid #30363d;
+    text-align: left;
+}
+
+th {
+    background-color: #238636; /* Encabezado verde */
+    color: white;
+    font-weight: bold;
+}
+
+/* Negritas y código */
+strong {
+    color: #2effa6; /* Las negritas brillarán en verde neón */
+}
+
+ul, ol {
+    padding-left: 20px; /* Espacio para las listas */
+}
+
+/* Para que los enlaces no se vean azules feos */
+a {
+    color: #58a6ff;
+    text-decoration: none;
+}
+a:hover {
+    text-decoration: underline;
+}
+
+/* --- INDICADOR DE CARGA --- */
+.hidden {
+    display: none !important; /* Oculto normalmente */
+}
+
+#loading-indicator {
+    padding: 10px 20px;
+    color: #8b949e; /* Gris suave */
+    font-size: 0.9rem;
+    font-style: italic;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+/* Animación de los puntos parpadeando */
+.dots {
+    animation: parpadeo 1.5s infinite;
+}
+
+@keyframes parpadeo {
+    0% { opacity: 0.2; }
+    50% { opacity: 1; }
+    100% { opacity: 0.2; }
+}
