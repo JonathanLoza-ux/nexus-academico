@@ -36,14 +36,18 @@ body {
     color: var(--text-main);
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     margin: 0;
-    height: 100vh;
-    overflow: hidden; /* Evita doble scroll */
+    /* CAMBIO AQUÍ: Usamos dvh para móviles */
+    height: 100vh;       /* Fallback para navegadores viejos */
+    height: 100dvh;      /* Altura real descontando la barra del navegador */
+    overflow: hidden;    /* Mantiene el bloqueo de scroll general */
 }
 
 /* --- LAYOUT PRINCIPAL --- */
 .app-container {
     display: flex;
+    /* CAMBIO AQUÍ: */
     height: 100vh;
+    height: 100dvh;
     width: 100%;
 }
 
@@ -358,5 +362,43 @@ a { color: var(--accent); }
     /* Mostrar el fondo oscuro cuando el menú está activo */
     #overlay.active {
         display: block;
+    }
+}
+
+/* ========================================= */
+/* AJUSTES ESPECIALES PARA MÓVILES (PADDING) */
+/* ========================================= */
+@media (max-width: 768px) {
+    /* Aquí están tus reglas del menú sidebar que ya pusimos */
+    
+    /* NUEVO: Ajustes para que el chat se vea bien en celular */
+    #input-area {
+        padding: 10px; /* Menos relleno para ganar espacio */
+        gap: 5px;
+    }
+
+    #input-area input {
+        padding: 10px; /* Input un poco más pequeño */
+        font-size: 16px; /* Evita que el iPhone haga zoom al escribir */
+    }
+
+    #chat-box {
+        padding: 15px; /* Menos relleno en los mensajes */
+    }
+    
+    /* También podrías ajustar el tamaño de los botones en móvil si quieres */
+    #input-area button {
+        width: 45px;
+        height: 45px;
+    }
+    
+    /* Ajustar el padding del header en móvil */
+    .chat-header {
+        padding: 15px 15px;
+    }
+    
+    /* Reducir el ancho máximo de los mensajes en móvil */
+    .message {
+        max-width: 90%;
     }
 }
