@@ -70,22 +70,34 @@
             
             <h3>Asistente Virtual</h3>
             
-            <div class="user-profile-area">
-                <span class="user-name">Hola, <strong>{{ name }}</strong></span>
+            <div class="user-profile-area profile-dropdown" onclick="toggleDropdown()">
+                <span class="user-name">{{ name }}</span>
                 
                 <div class="profile-pic-placeholder">
-                    {{ name[0] | upper }} </div>
+                    {{ name[0] | upper }}
+                </div>
 
-                <a href="{{ url_for('logout') }}" class="logout-btn" title="Cerrar Sesión">
-                    <i class="fas fa-sign-out-alt"></i>
-                </a>
+                <div id="myDropdown" class="dropdown-content">
+                    <div style="padding: 10px; text-align: center; color: var(--text-dim); font-size: 0.8rem; border-bottom: 1px solid var(--border);">
+                        {{ email }} </div>
+                    
+                    <a href="https://wa.me/50364254348" target="_blank">
+                        <i class="fab fa-whatsapp" style="color: #25D366;"></i> Soporte Técnico
+                    </a>
+                    
+                    <div class="dropdown-divider"></div>
+                    
+                    <a href="{{ url_for('logout') }}" style="color: #ef4444;">
+                        <i class="fas fa-sign-out-alt"></i> Cerrar Sesión
+                    </a>
+                </div>
             </div>
         </header>
 
             <div id="chat-box">
                 <div class="message bot-msg">
                     <div class="msg-content">
-                        ¡Hola! Soy <strong>Nexus</strong>. Selecciona una materia del menú lateral para comenzar.
+                        ¡Hola, <strong>{{ name }}</strong>! Soy <strong>Nexus</strong>. Selecciona una materia del menú lateral para comenzar.
                     </div>
                 </div>
             </div>

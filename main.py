@@ -133,10 +133,10 @@ def logout():
 # --- RUTAS PRINCIPALES ---
 
 @app.route('/')
-@login_required # <--- AHORA PROTEGIDO: Solo si estás logueado
+@login_required
 def home():
-    # Pasamos el nombre del usuario al HTML
-    return render_template('index.html', name=current_user.name)
+    # Pasamos nombre Y correo al HTML
+    return render_template('index.html', name=current_user.name, email=current_user.email)
 
 @app.route('/chat', methods=['POST'])
 @login_required
