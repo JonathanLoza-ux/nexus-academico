@@ -70,6 +70,13 @@ function agregarMensaje(texto, clase) {
 function seleccionarMateria(materia) {
     const input = document.getElementById('user-input');
     input.value = "Quiero aprender sobre " + materia + ". ¿Por dónde empezamos?";
+
+    // --- NUEVO: CERRAR MENÚ AUTOMÁTICAMENTE ---
+    // Si estamos en móvil (la pantalla es pequeña), cerramos el menú
+    if (window.innerWidth <= 768) {
+        toggleSidebar();
+    }
+    
     input.focus();
     // enviarMensaje(); // Descomenta esto si quieres que se envíe solo al hacer clic
 }

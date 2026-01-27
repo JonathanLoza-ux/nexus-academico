@@ -292,113 +292,106 @@ a { color: var(--accent); }
     margin-right: 15px;
 }
 
-/* REGLAS SOLO PARA PANTALLAS PEQUEÑAS (Celulares/Tablets) */
+/* ========================================= */
+/* DISEÑO MÓVIL (CORREGIDO)            */
+/* ========================================= */
+
 @media (max-width: 768px) {
     
-    /* 1. Mostrar el botón de menú */
-    #menu-btn {
-        display: block;
+    /* 1. LAYOUT GENERAL */
+    .app-container {
+        flex-direction: column; /* Apilar cosas si es necesario */
+        height: 100dvh; /* Altura dinámica real */
     }
 
-    /* 2. Ocultar la barra lateral moviéndola a la izquierda */
+    /* 2. BARRA LATERAL (SIDEBAR) CORREGIDA */
     .sidebar {
-        position: fixed; /* Flota sobre el chat */
-        left: -280px;    /* Escondida fuera de la pantalla */
+        position: fixed;
+        left: -100%;       /* Escondida totalmente a la izquierda */
         top: 0;
-        height: 100%;
-        z-index: 1000;   /* Que esté por encima de todo */
-        transition: left 0.3s ease; /* Animación suave al salir */
-        box-shadow: 5px 0 15px rgba(0,0,0,0.5); /* Sombra para que destaque */
+        width: 80%;        /* Que no ocupe toda la pantalla, solo el 80% */
+        height: 100dvh;    /* Altura completa del móvil */
+        z-index: 1000;
+        transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 5px 0 25px rgba(0,0,0,0.5);
+        
+        /* ESTO PERMITE EL SCROLL DENTRO DEL MENÚ SI ES MUY LARGO */
+        overflow-y: auto; 
     }
 
-    /* 3. Clase para mostrarla cuando se active */
     .sidebar.active {
-        left: 0; /* Vuelve a su sitio original */
+        left: 0; /* Mostrar */
     }
 
-    /* 4. Opcional: Oscurecer el fondo cuando el menú está abierto */
-    .overlay {
-        display: none; /* Pendiente */
-    }
-}
-
-/* --- ARREGLO DEL MENÚ MÓVIL --- */
-
-/* Estilo del botón "X" (Cerrar) */
-#close-sidebar-btn {
-    display: none; /* Oculto en PC */
-    background: none;
-    border: none;
-    color: var(--text-dim);
-    font-size: 1.2rem;
-    cursor: pointer;
-}
-
-/* El fondo oscuro (Overlay) */
-#overlay {
-    display: none; /* Oculto siempre por defecto */
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.5); /* Negro semitransparente */
-    backdrop-filter: blur(3px); /* Efecto borroso bonito */
-    z-index: 900; /* Debajo del menú (1000) pero encima del chat */
-}
-
-/* CUANDO ESTAMOS EN MÓVIL */
-@media (max-width: 768px) {
-    /* Mostrar la X */
+    /* Botón X dentro del menú */
     #close-sidebar-btn {
         display: block;
-    }
-    
-    /* Separar el logo de la X */
-    .sidebar-header {
-        justify-content: space-between;
+        font-size: 1.4rem;
+        padding: 5px;
     }
 
-    /* Mostrar el fondo oscuro cuando el menú está activo */
-    #overlay.active {
-        display: block;
+    /* 3. FONDO OSCURO (OVERLAY) */
+    #overlay {
+        display: none;
+        position: fixed;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(2px);
+        z-index: 900;
     }
-}
+    #overlay.active { display: block; }
 
-/* ========================================= */
-/* AJUSTES ESPECIALES PARA MÓVILES (PADDING) */
-/* ========================================= */
-@media (max-width: 768px) {
-    /* Aquí están tus reglas del menú sidebar que ya pusimos */
-    
-    /* NUEVO: Ajustes para que el chat se vea bien en celular */
-    #input-area {
-        padding: 10px; /* Menos relleno para ganar espacio */
-        gap: 5px;
+    /* 4. ENCABEZADO ESTILO GEMINI (3 Rayas - Título - Perfil) */
+    .chat-header {
+        padding: 10px 15px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between; /* Separa los elementos */
+        height: 60px;
     }
 
-    #input-area input {
-        padding: 10px; /* Input un poco más pequeño */
-        font-size: 16px; /* Evita que el iPhone haga zoom al escribir */
+    #menu-btn {
+        display: block; /* Mostrar hamburguesa */
+        font-size: 1.4rem;
+        padding: 5px;
+    }
+
+    .chat-header h3 {
+        font-size: 1.1rem;
+        margin: 0;
+        position: absolute; /* Truco para centrarlo perfecto */
+        left: 50%;
+        transform: translateX(-50%);
+        white-space: nowrap;
+    }
+
+    /* 5. ÁREA DE CHAT (Para que no se corte el texto) */
+    .chat-area {
+        width: 100%;
+        height: 100dvh;
     }
 
     #chat-box {
-        padding: 15px; /* Menos relleno en los mensajes */
+        padding: 15px;
+        /* Ajuste para que el último mensaje no quede tapado por el input */
+        padding-bottom: 20px; 
     }
-    
-    /* También podrías ajustar el tamaño de los botones en móvil si quieres */
-    #input-area button {
-        width: 45px;
-        height: 45px;
-    }
-    
-    /* Ajustar el padding del header en móvil */
-    .chat-header {
-        padding: 15px 15px;
-    }
-    
-    /* Reducir el ancho máximo de los mensajes en móvil */
+
     .message {
-        max-width: 90%;
+        max-width: 92%; /* Aprovechar más espacio */
+        font-size: 0.95rem;
+    }
+
+    /* 6. INPUT AREA (Escribir) */
+    #input-area {
+        padding: 10px;
+        gap: 8px;
+        background-color: var(--bg-dark); /* Asegurar fondo sólido */
+    }
+
+    #input-area input {
+        padding: 12px;
+        font-size: 16px; /* Evita zoom en iPhone */
     }
 }
