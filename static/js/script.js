@@ -1,145 +1,136 @@
-/* static/js/script.js - Versión Final Corregida */
-
-async function enviarMensaje() {
-    const input = document.getElementById('user-input');
-    const mensaje = input.value.trim();
-    const chatBox = document.getElementById('chat-box');
-    const loader = document.getElementById('loading-indicator'); // El indicador de carga
-
-    // 1. Si no hay mensaje, no hacemos nada
-    if (!mensaje) return;
-
-    // 2. Mostrar mensaje del usuario
-    agregarMensaje(mensaje, 'user-msg');
-    input.value = ''; // Limpiar input
-    chatBox.scrollTop = chatBox.scrollHeight; // Bajar scroll
-
-    // --- ENCENDER EL "PENSANDO..." ---
-    if (loader) loader.classList.remove('hidden');
-
-    try {
-        // Enviar a Python
-        const respuesta = await fetch('/api/chat', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ 'mensaje': mensaje })
-        });
-
-        const data = await respuesta.json();
-
-        // --- APAGAR EL "PENSANDO..." (Éxito) ---
-        if (loader) loader.classList.add('hidden');
-
-        // Mostrar respuesta de la IA
-        agregarMensaje(data.respuesta, 'bot-msg');
-
-    } catch (error) {
-        console.error('Error:', error);
-        
-        // --- APAGAR EL "PENSANDO..." (Error) ---
-        // Incluso si falla, debemos quitar el letrero
-        if (loader) loader.classList.add('hidden');
-        
-        agregarMensaje("Lo siento, tuve un error de conexión. Intenta de nuevo.", 'bot-msg');
-    }
-
-    // Bajar scroll de nuevo
-    chatBox.scrollTop = chatBox.scrollHeight;
-}
-
-// Función para dibujar los mensajes (Con Markdown y Matemáticas)
-function agregarMensaje(texto, clase) {
-    const chatBox = document.getElementById('chat-box');
-    const div = document.createElement('div');
-    div.classList.add('message', clase);
-    
-    // 1. Convertir Markdown a HTML
-    div.innerHTML = marked.parse(texto);
-    
-    chatBox.appendChild(div);
-
-    // 2. Renderizar Matemáticas (Si hay fórmulas)
-    if (window.MathJax) {
-        MathJax.typesetPromise([div]).catch((err) => console.log(err));
-    }
-}
-
-// Función para los botones de Materias
-function seleccionarMateria(materia) {
-    const input = document.getElementById('user-input');
-    input.value = "Quiero aprender sobre " + materia + ". ¿Por dónde empezamos?";
-
-    // --- NUEVO: CERRAR MENÚ AUTOMÁTICAMENTE ---
-    // Si estamos en móvil (la pantalla es pequeña), cerramos el menú
-    if (window.innerWidth <= 768) {
-        toggleSidebar();
-    }
-
-    input.focus();
-    // enviarMensaje(); // Descomenta esto si quieres que se envíe solo al hacer clic
-}
-
-// Permitir enviar con Enter
-document.getElementById("user-input").addEventListener("keypress", function(event) {
-    if (event.key === "Enter") {
-        enviarMensaje();
-    }
-});
-
-// Función para abrir/cerrar el menú en celular
+// --- VARIABLES GLOBALES ---
+/* 1. FUNCIÓN PARA EL MENÚ (PC y MÓVIL) */
 function toggleSidebar() {
     const sidebar = document.querySelector('.sidebar');
     const overlay = document.getElementById('overlay');
-    
-    // Activar/Desactivar ambos
-    sidebar.classList.toggle('active');
-    overlay.classList.toggle('active');
+
+    if (window.innerWidth <= 768) {
+        // Lógica Móvil (Overlay)
+        sidebar.classList.toggle('active');
+        if (overlay) overlay.classList.toggle('active');
+    } else {
+        // Lógica PC (Empujar/Ocultar)
+        sidebar.classList.toggle('closed');
+    }
 }
 
-/* --- BUSCADOR DE MATERIAS --- */
+/* 2. FUNCIÓN PARA EL TEMA (CLARO/OSCURO) */
+function toggleTheme() {
+    const body = document.body;
+    const icon = document.querySelector('.theme-btn-header i');
+
+    body.classList.toggle('light-mode');
+
+    // Cambiar icono
+    if (body.classList.contains('light-mode')) {
+        if(icon) { icon.classList.remove('fa-moon'); icon.classList.add('fa-sun'); }
+    } else {
+        if(icon) { icon.classList.remove('fa-sun'); icon.classList.add('fa-moon'); }
+    }
+}
+
+/* 3. BUSCADOR DE MATERIAS */
 function filtrarMaterias() {
-    // 1. Obtener texto del buscador
     const input = document.getElementById('subject-search');
     const filtro = input.value.toLowerCase();
-    
-    // 2. Obtener todos los botones de materias (excluyendo el de modo oscuro)
     const lista = document.getElementById('subject-list');
     const botones = lista.getElementsByClassName('nav-btn');
 
-    // 3. Recorrer y ocultar/mostrar
     for (let i = 0; i < botones.length; i++) {
-        const textoboton = botones[i].textContent || botones[i].innerText;
+        const texto = botones[i].textContent || botones[i].innerText;
+        botones[i].style.display = texto.toLowerCase().indexOf(filtro) > -1 ? "" : "none";
+    }
+}
+
+/* 4. SELECCIONAR MATERIA */
+function seleccionarMateria(materia) {
+    const input = document.getElementById('user-input');
+    input.value = "Quiero aprender sobre " + materia + ". ¿Por dónde empezamos?";
+    
+    // Cerrar menú solo si estamos en móvil
+    if (window.innerWidth <= 768) {
+        toggleSidebar();
+    }
+    input.focus();
+}
+
+/* 5. ENVIAR MENSAJE (CON SCROLL QUIETO) */
+function enviarMensaje() {
+    const input = document.getElementById('user-input');
+    const mensaje = input.value.trim();
+    if (!mensaje) return;
+
+    // Mostrar mensaje usuario
+    mostrarMensaje(mensaje, 'user');
+    input.value = '';
+
+    // Mostrar indicador de carga
+    document.getElementById('loading-indicator').classList.remove('hidden');
+
+    // Hacer scroll al fondo AHORA (cuando tú envías sí quieres ver tu mensaje)
+    const chatBox = document.getElementById('chat-box');
+    chatBox.scrollTop = chatBox.scrollHeight;
+
+    // Llamar al servidor (Asegúrate de que en Python la ruta sea '/chat')
+    fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: mensaje })
+    })
+    .then(response => response.json())
+    .then(data => {
+        document.getElementById('loading-indicator').classList.add('hidden');
         
-        if (textoboton.toLowerCase().indexOf(filtro) > -1) {
-            botones[i].style.display = ""; // Mostrar
-        } else {
-            botones[i].style.display = "none"; // Ocultar
+        // Crear contenedor para la respuesta del bot
+        const botDiv = document.createElement('div');
+        botDiv.className = 'message bot-msg';
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'msg-content';
+        botDiv.appendChild(contentDiv);
+        document.getElementById('chat-box').appendChild(botDiv);
+
+        // Iniciamos el efecto de escritura (Sin bajar el scroll)
+        typeWriter(contentDiv, data.response);
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        document.getElementById('loading-indicator').classList.add('hidden');
+    });
+}
+
+function mostrarMensaje(texto, sender) {
+    const chatBox = document.getElementById('chat-box');
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message ${sender}-msg`;
+    
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'msg-content';
+    
+    // Si es usuario, texto plano.
+    contentDiv.textContent = texto; 
+    
+    msgDiv.appendChild(contentDiv);
+    chatBox.appendChild(msgDiv);
+}
+
+/* 6. EFECTO DE ESCRITURA (ARREGLADO) */
+function typeWriter(element, text, index = 0) {
+    if (index < text.length) {
+        // Renderizamos progresivamente con Marked (Markdown)
+        element.innerHTML = marked.parse(text.substring(0, index + 1)); 
+        
+        // IMPORTANTE: Aquí NO bajamos el scroll automáticamente.
+        
+        setTimeout(() => typeWriter(element, text, index + 1), 5); // Velocidad rápida
+    } else {
+        // Al terminar, renderizamos Matemáticas si hay fórmulas
+        if (window.MathJax) {
+            MathJax.typesetPromise([element]).catch((err) => console.log(err));
         }
     }
 }
 
-/* --- MODO CLARO / OSCURO --- */
-function toggleTheme() {
-    const body = document.body;
-    // Buscamos el icono dentro del botón nuevo (.theme-btn-header)
-    const icon = document.querySelector('.theme-btn-header i'); 
-
-    body.classList.toggle('light-mode');
-
-    if (body.classList.contains('light-mode')) {
-        icon.classList.remove('fa-moon');
-        icon.classList.add('fa-sun');
-    } else {
-        icon.classList.remove('fa-sun');
-        icon.classList.add('fa-moon');
-    }
-}
-
-// Opcional: Cerrar el menú automáticamente cuando elijes una materia (para que no estorbe)
-// Busca tu función existente 'seleccionarMateria' y agrégale esto al final:
-/*
-    const sidebar = document.querySelector('.sidebar');
-    sidebar.classList.remove('active');
-*/
+// Permitir Enter para enviar
+document.getElementById('user-input').addEventListener('keypress', function (e) {
+    if (e.key === 'Enter') enviarMensaje();
+});

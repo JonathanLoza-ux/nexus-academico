@@ -1,34 +1,28 @@
-/* style.css - Diseño Nexus 2.0 (Tech Blue) */
+/* style.css - Diseño Nexus 2.0 (Final Universal) */
 :root {
     /* Paleta de Colores "Futuro Azul" */
-    --bg-dark: #0f172a;       /* Fondo principal (Azul muy oscuro) */
+    --bg-dark: #0f172a;       /* Fondo principal */
     --bg-sidebar: #1e293b;    /* Fondo barra lateral */
     --bg-chat: #1e293b;       /* Fondo de mensajes bot */
-    --accent: #06b6d4;        /* Cian Eléctrico (Botones y detalles) */
-    --accent-hover: #0891b2;  /* Cian más oscuro al pasar el mouse */
-    --text-main: #f1f5f9;     /* Blanco suave */
-    --text-dim: #94a3b8;      /* Gris azulado (textos secundarios) */
-    --border: #334155;        /* Bordes sutiles */
-    --user-msg-bg: #2563eb;   /* Azul intenso para el usuario */
+    --accent: #06b6d4;        /* Cian Eléctrico */
+    --accent-hover: #0891b2;
+    --text-main: #f1f5f9;     /* Blanco */
+    --text-dim: #94a3b8;      /* Gris */
+    --border: #334155;
+    --user-msg-bg: #2563eb;   /* Azul usuario */
 }
 
-/* --- PALETA MODO CLARO (Light Mode) --- */
+/* MODO CLARO */
 body.light-mode {
-    --bg-dark: #f8fafc;       /* Fondo casi blanco */
-    --bg-sidebar: #ffffff;    /* Barra lateral blanca pura */
-    --bg-chat: #ffffff;       /* Fondo mensajes bot */
-    --accent: #0284c7;        /* Azul un poco más oscuro para que se lea bien */
+    --bg-dark: #f8fafc;
+    --bg-sidebar: #ffffff;
+    --bg-chat: #ffffff;
+    --accent: #0284c7;
     --accent-hover: #0369a1;
-    --text-main: #1e293b;     /* Texto oscuro */
-    --text-dim: #64748b;      /* Texto secundario gris */
-    --border: #e2e8f0;        /* Bordes grises suaves */
-    --user-msg-bg: #0ea5e9;   /* Azul brillante usuario */
-}
-
-/* Ajustes específicos para modo claro */
-body.light-mode th {
-    background-color: #f1f5f9;
-    color: #334155;
+    --text-main: #1e293b;
+    --text-dim: #64748b;
+    --border: #e2e8f0;
+    --user-msg-bg: #0ea5e9;
 }
 
 body {
@@ -36,16 +30,14 @@ body {
     color: var(--text-main);
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     margin: 0;
-    /* CAMBIO AQUÍ: Usamos dvh para móviles */
-    height: 100vh;       /* Fallback para navegadores viejos */
-    height: 100dvh;      /* Altura real descontando la barra del navegador */
-    overflow: hidden;    /* Mantiene el bloqueo de scroll general */
+    height: 100vh;
+    height: 100dvh; /* Altura real para móviles */
+    overflow: hidden;
 }
 
 /* --- LAYOUT PRINCIPAL --- */
 .app-container {
     display: flex;
-    /* CAMBIO AQUÍ: */
     height: 100vh;
     height: 100dvh;
     width: 100%;
@@ -53,28 +45,50 @@ body {
 
 /* --- BARRA LATERAL (SIDEBAR) --- */
 .sidebar {
-    width: 260px;
+    width: 280px;            /* Ancho normal en PC */
     background-color: var(--bg-sidebar);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     padding: 20px;
-    flex-shrink: 0; /* No se encoge */
+    flex-shrink: 0;          /* Evita que se aplaste */
+    
+    /* ANIMACIÓN SUAVE PARA EL CIERRE */
+    transition: margin-left 0.3s ease, transform 0.3s ease;
+    overflow: hidden;        
 }
 
+/* CLASE PARA CERRAR EN PC (Lo ocultamos moviéndolo a la izquierda) */
+.sidebar.closed {
+    margin-left: -321px; /* Ancho + padding + borde */
+}
+
+/* ENCABEZADO DEL MENÚ */
 .sidebar-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    padding-right: 5px;
+}
+
+.brand-container {
+    display: flex;
+    align-items: center;
     gap: 10px;
-    margin-bottom: 30px;
     color: var(--accent);
 }
 
-.logo-icon {
-    font-size: 1.5rem;
+.theme-btn-header {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 5px;
 }
 
-/* Buscador */
+/* BUSCADOR */
 .search-box {
     position: relative;
     margin-bottom: 20px;
@@ -88,29 +102,21 @@ body {
 }
 .search-box input {
     width: 100%;
-    padding: 10px 10px 10px 35px; /* Espacio para el icono */
+    padding: 10px 10px 10px 35px;
     background-color: var(--bg-dark);
     border: 1px solid var(--border);
     border-radius: 8px;
-    color: white;
-    box-sizing: border-box; /* Para que el padding no rompa el ancho */
+    color: var(--text-main);
+    box-sizing: border-box;
 }
 
-/* Lista de botones */
+/* LISTA DE MATERIAS */
 .subject-list {
     flex: 1;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 5px;
-}
-
-.section-title {
-    font-size: 0.75rem;
-    color: var(--text-dim);
-    font-weight: bold;
-    margin-bottom: 10px;
-    letter-spacing: 1px;
 }
 
 .nav-btn {
@@ -127,15 +133,9 @@ body {
     font-size: 0.95rem;
     transition: all 0.2s;
 }
-
 .nav-btn:hover {
-    background-color: rgba(6, 182, 212, 0.1); /* Cian transparente */
+    background-color: rgba(6, 182, 212, 0.1);
     color: var(--accent);
-}
-
-.nav-btn i {
-    width: 20px; /* Para que los iconos queden alineados */
-    text-align: center;
 }
 
 /* --- ÁREA DEL CHAT --- */
@@ -144,48 +144,62 @@ body {
     display: flex;
     flex-direction: column;
     background-color: var(--bg-dark);
+    width: 100%; /* Asegura ancho completo */
 }
 
 .chat-header {
-    padding: 15px 25px;
-    border-bottom: 1px solid var(--border);
+    padding: 10px 15px;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    height: 60px;
+    border-bottom: 1px solid var(--border);
 }
 
-.status-dot {
-    height: 10px;
-    width: 10px;
-    background-color: #22c55e; /* Verde online */
-    border-radius: 50%;
-    box-shadow: 0 0 5px #22c55e;
+/* BOTÓN DE MENÚ (Hamburguesa) */
+#menu-btn {
+    display: block;
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 1.5rem;
+    cursor: pointer;
+    margin-right: 15px;
+    transition: transform 0.2s;
+}
+#menu-btn:active { transform: scale(0.9); }
+
+.chat-header h3 {
+    font-size: 1.1rem;
+    margin: 0;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
 }
 
 #chat-box {
     flex: 1;
     padding: 30px;
+    padding-bottom: 20px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 20px;
 }
 
-/* Mensajes */
+/* MENSAJES */
 .message {
     max-width: 80%;
     line-height: 1.6;
     animation: fadeIn 0.3s ease;
 }
-
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
 }
 
-.bot-msg {
-    align-self: flex-start;
-}
+.bot-msg { align-self: flex-start; }
 .bot-msg .msg-content {
     background-color: var(--bg-chat);
     color: var(--text-main);
@@ -194,18 +208,15 @@ body {
     border: 1px solid var(--border);
 }
 
-.user-msg {
-    align-self: flex-end;
-}
-.user-msg .msg-content { /* Truco para que el CSS de Markdown no rompa el color */
+.user-msg { align-self: flex-end; }
+.user-msg .msg-content {
     background-color: var(--user-msg-bg);
     color: white;
     padding: 15px 20px;
     border-radius: 15px 15px 0 15px;
-    box-shadow: 0 4px 15px rgba(37, 99, 235, 0.2);
 }
 
-/* Input Area */
+/* AREA DE INPUT */
 #input-area {
     padding: 20px;
     background-color: var(--bg-dark);
@@ -213,21 +224,16 @@ body {
     display: flex;
     gap: 10px;
 }
-
 #input-area input {
     flex: 1;
     padding: 15px;
     border-radius: 10px;
     border: 1px solid var(--border);
     background-color: var(--bg-sidebar);
-    color: white;
+    color: var(--text-main);
     font-size: 1rem;
     outline: none;
 }
-#input-area input:focus {
-    border-color: var(--accent);
-}
-
 #input-area button {
     width: 50px;
     height: 50px;
@@ -237,14 +243,9 @@ body {
     border: none;
     cursor: pointer;
     font-size: 1.2rem;
-    transition: transform 0.2s;
     display: flex;
     align-items: center;
     justify-content: center;
-}
-#input-area button:hover {
-    background-color: var(--accent-hover);
-    transform: scale(1.05);
 }
 
 /* Indicador de carga */
@@ -254,11 +255,9 @@ body {
     font-style: italic;
     font-size: 0.9rem;
 }
-.hidden {
-    display: none !important;
-}
+.hidden { display: none !important; }
 
-/* Estilos Markdown (Tablas y Texto) */
+/* Estilos Markdown */
 table {
     width: 100%;
     border-collapse: collapse;
@@ -268,97 +267,25 @@ table {
     overflow: hidden;
     font-size: 0.9rem;
 }
-th, td {
-    padding: 10px;
-    border-bottom: 1px solid var(--border);
-}
-th {
-    background-color: #334155;
-    color: white;
-}
-strong { color: var(--accent); }
-a { color: var(--accent); }
+th, td { padding: 10px; border-bottom: 1px solid var(--border); }
+th { background-color: #334155; color: white; }
+strong, a { color: var(--accent); }
 
-/* --- RESPONSIVIDAD (MÓVIL) --- */
-
-/* Por defecto, el botón de menú está oculto en PC */
-#menu-btn {
-    display: none; 
-    background: none;
-    border: none;
-    color: var(--accent);
-    font-size: 1.5rem;
-    cursor: pointer;
-    margin-right: 15px;
-}
-
-/* ========================================= */
-/* DISEÑO MÓVIL (CORREGIDO)            */
-/* ========================================= */
-
+/* --- AJUSTES MÓVILES --- */
 @media (max-width: 768px) {
-    
-    /* 1. LAYOUT GENERAL */
-    .app-container {
-        flex-direction: column; /* Apilar cosas si es necesario */
-        height: 100dvh; /* Altura dinámica real */
-    }
-
-    /* 2. BARRA LATERAL (SIDEBAR) CORREGIDA */
     .sidebar {
         position: fixed;
-        left: -100%;
+        left: -100%;       /* Oculto por defecto en móvil */
         top: 0;
-        /* CAMBIO AQUÍ: Ancho fijo más elegante (antes era 80%) */
-        width: 280px; 
         height: 100dvh;
         z-index: 1000;
-        transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        margin-left: 0;    /* Reseteamos el margen de PC */
         box-shadow: 5px 0 25px rgba(0,0,0,0.5);
-        overflow-y: auto;
     }
+    .sidebar.active { left: 0; }
+    .sidebar.closed { margin-left: 0; } /* No aplica en móvil */
 
-    /* ESTILO PARA EL ENCABEZADO DEL MENÚ (Logo izq - Botón der) */
-    .sidebar-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between; /* Esto los separa a las esquinas */
-        margin-bottom: 20px;
-        padding-right: 5px; /* Un poco de espacio extra */
-    }
-
-    .brand-container {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        color: var(--accent);
-    }
-
-    /* Estilo del botón de la Luna en el encabezado */
-    .theme-btn-header {
-        background: none;
-        border: none;
-        color: var(--text-dim);
-        font-size: 1.2rem;
-        cursor: pointer;
-        padding: 5px;
-    }
-    
-    /* Ocultar el botón X viejo si quedó algún rastro */
-    #close-sidebar-btn { display: none; }
-
-    .sidebar.active {
-        left: 0; /* Mostrar */
-    }
-
-    /* Botón X dentro del menú */
-    #close-sidebar-btn {
-        display: block;
-        font-size: 1.4rem;
-        padding: 5px;
-    }
-
-    /* 3. FONDO OSCURO (OVERLAY) */
+    /* Fondo oscuro */
     #overlay {
         display: none;
         position: fixed;
@@ -370,56 +297,8 @@ a { color: var(--accent); }
     }
     #overlay.active { display: block; }
 
-    /* 4. ENCABEZADO ESTILO GEMINI (3 Rayas - Título - Perfil) */
-    .chat-header {
-        padding: 10px 15px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between; /* Separa los elementos */
-        height: 60px;
-    }
-
-    #menu-btn {
-        display: block; /* Mostrar hamburguesa */
-        font-size: 1.4rem;
-        padding: 5px;
-    }
-
-    .chat-header h3 {
-        font-size: 1.1rem;
-        margin: 0;
-        position: absolute; /* Truco para centrarlo perfecto */
-        left: 50%;
-        transform: translateX(-50%);
-        white-space: nowrap;
-    }
-
-    /* 5. ÁREA DE CHAT (Para que no se corte el texto) */
-    .chat-area {
-        width: 100%;
-        height: 100dvh;
-    }
-
-    #chat-box {
-        padding: 15px;
-        /* Ajuste para que el último mensaje no quede tapado por el input */
-        padding-bottom: 20px; 
-    }
-
-    .message {
-        max-width: 92%; /* Aprovechar más espacio */
-        font-size: 0.95rem;
-    }
-
-    /* 6. INPUT AREA (Escribir) */
-    #input-area {
-        padding: 10px;
-        gap: 8px;
-        background-color: var(--bg-dark); /* Asegurar fondo sólido */
-    }
-
-    #input-area input {
-        padding: 12px;
-        font-size: 16px; /* Evita zoom en iPhone */
-    }
+    /* Ajustes Chat Móvil */
+    #input-area { padding: 10px; gap: 8px; }
+    #input-area input { padding: 12px; font-size: 16px; }
+    .message { max-width: 92%; }
 }

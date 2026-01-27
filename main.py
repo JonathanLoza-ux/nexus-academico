@@ -45,25 +45,29 @@ app = Flask(__name__)
 def home():
     return render_template('index.html')
 
-@app.route('/api/chat', methods=['POST'])
+@app.route('/chat', methods=['POST'])
 def chat():
     # CORRECCIÓN AQUÍ: Declaramos global al principio de la función
     global chat_session
     
     data = request.json
-    mensaje_usuario = data.get('mensaje', '')
+    # CAMBIO 1: 'mensaje' -> 'message' (Para coincidir con el JS)
+    mensaje_usuario = data.get('message', '')
 
     if not mensaje_usuario:
-        return jsonify({'respuesta': 'Por favor escribe una pregunta.'})
+        # CAMBIO 2: 'respuesta' -> 'response'
+        return jsonify({'response': 'Por favor escribe una pregunta.'})
 
     try:
         # Enviamos el mensaje
         response = chat_session.send_message(mensaje_usuario)
-        return jsonify({'respuesta': response.text})
+        # CAMBIO 3: 'respuesta' -> 'response'
+        return jsonify({'response': response.text})
     except Exception as e:
         # Si falla, reiniciamos la memoria
         chat_session = model.start_chat(history=[])
-        return jsonify({'respuesta': f"Tuve un pequeño lapso de memoria. Intenta preguntar de nuevo. (Error: {str(e)})"})
+        # CAMBIO 4: 'respuesta' -> 'response'
+        return jsonify({'response': f"Tuve un pequeño lapso de memoria. Intenta preguntar de nuevo. (Error: {str(e)})"})
 
 if __name__ == '__main__':
     app.run(debug=True)
