@@ -302,3 +302,58 @@ strong, a { color: var(--accent); }
     #input-area input { padding: 12px; font-size: 16px; }
     .message { max-width: 92%; }
 }
+
+/* --- ESTILOS PARA SUBIR IMÁGENES --- */
+
+/* Botón de Clip (Adjuntar) */
+.attach-btn {
+    background-color: transparent !important; /* Transparente para diferenciarlo */
+    color: var(--text-dim) !important;
+    border: 1px solid var(--border) !important;
+    margin-right: 5px;
+}
+.attach-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1) !important;
+    color: var(--accent) !important;
+    border-color: var(--accent) !important;
+}
+
+/* Contenedor de la Vista Previa (Flota encima del input) */
+#image-preview-container {
+    padding: 10px 20px;
+    background-color: var(--bg-dark);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+}
+
+.preview-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+#image-preview {
+    height: 80px; /* Tamaño de la miniatura */
+    border-radius: 10px;
+    border: 2px solid var(--accent);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+
+/* Botón X para quitar la imagen seleccionada */
+.close-preview-btn {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background-color: #ef4444; /* Rojo */
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 22px;
+    height: 22px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}

@@ -87,8 +87,24 @@
                 <i class="fas fa-circle-notch fa-spin"></i> Nexus está pensando...
             </div>
 
+            <div id="image-preview-container" class="hidden">
+                <div class="preview-wrapper">
+                    <img id="image-preview" src="" alt="Vista previa">
+                    <button onclick="quitarImagen()" class="close-preview-btn">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+
             <div id="input-area">
-                <input type="text" id="user-input" placeholder="Escribe tu pregunta aquí...">
+                <input type="file" id="image-input" accept="image/*" style="display: none;" onchange="mostrarVistaPrevia()">
+                
+                <button class="attach-btn" onclick="document.getElementById('image-input').click()">
+                    <i class="fas fa-paperclip"></i>
+                </button>
+
+                <input type="text" id="user-input" placeholder="Escribe o sube una foto...">
+                
                 <button onclick="enviarMensaje()">
                     <i class="fas fa-paper-plane"></i>
                 </button>
