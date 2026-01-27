@@ -258,14 +258,51 @@ body {
 .hidden { display: none !important; }
 
 /* Estilos Markdown */
+/* --- ESTILOS DE TABLAS (MEJORADOS) --- */
 table {
     width: 100%;
-    border-collapse: collapse;
-    margin: 15px 0;
+    border-collapse: separate; /* Permite bordes redondeados */
+    border-spacing: 0;
+    margin: 20px 0;
     background-color: var(--bg-sidebar);
-    border-radius: 8px;
+    border-radius: 12px; /* Bordes más redondeados */
     overflow: hidden;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
+    border: 1px solid var(--border);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+th, td {
+    padding: 12px 15px;
+    border-bottom: 1px solid var(--border);
+    /* LA CLAVE: Centrar el texto para que los números se alineen */
+    text-align: center; 
+    vertical-align: middle;
+}
+
+th {
+    background-color: #1e293b; /* Encabezado oscuro */
+    color: var(--accent);       /* Texto color acento (Cian) */
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 2px solid var(--border);
+}
+
+/* Filas alternas para leer mejor (opcional, muy sutil) */
+tr:nth-child(even) {
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+/* Efecto al pasar el mouse por una fila */
+tr:hover td {
+    background-color: rgba(255, 255, 255, 0.05);
+    transition: background-color 0.2s;
+}
+
+/* Quitar borde a la última fila */
+tr:last-child td {
+    border-bottom: none;
 }
 th, td { padding: 10px; border-bottom: 1px solid var(--border); }
 th { background-color: #334155; color: white; }
