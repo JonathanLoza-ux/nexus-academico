@@ -70,8 +70,15 @@
             
             <h3>Asistente Virtual</h3>
             
-            <div class="user-profile-icon">
-                <i class="fas fa-user-circle" style="font-size: 1.8rem; color: var(--accent);"></i>
+            <div class="user-profile-area">
+                <span class="user-name">Hola, <strong>{{ name }}</strong></span>
+                
+                <div class="profile-pic-placeholder">
+                    {{ name[0] | upper }} </div>
+
+                <a href="{{ url_for('logout') }}" class="logout-btn" title="Cerrar Sesión">
+                    <i class="fas fa-sign-out-alt"></i>
+                </a>
             </div>
         </header>
 

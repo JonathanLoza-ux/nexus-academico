@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acceso - Nexus</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="login-body">
+
+    <div class="login-container">
+        <div class="login-header">
+            <i class="fas fa-brain logo-icon"></i>
+            <h1>NEXUS</h1>
+            <p>Tu asistente académico inteligente</p>
+        </div>
+
+        <div class="form-box">
+            
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">
+                            <i class="fas fa-exclamation-circle"></i> {{ message }}
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <div class="toggle-btns">
+                <button id="btn-login" class="active" onclick="mostrarLogin()">Iniciar Sesión</button>
+                <button id="btn-register" onclick="mostrarRegistro()">Registrarse</button>
+            </div>
+
+            <form id="login-form" action="/login" method="POST">
+                <div class="input-group">
+                    <i class="fas fa-envelope"></i>
+                    <input type="email" name="email" placeholder="Correo Electrónico" required>
+                </div>
+                <div class="input-group">
+                    <i class="fas fa-lock"></i>
+                    <input type="password" name="password" id="login-pass" placeholder="Contraseña" required>
+                    <i class="fas fa-eye toggle-eye" onclick="togglePassword('login-pass', this)"></i>
+                </div>
+                <button type="submit" class="submit-btn">Entrar</button>
+            </form>
+
+            <form id="register-form" action="/register" method="POST" style="display: none;">
+                <div class="input-group">
+                    <i class="fas fa-user"></i>
+                    <input type="text" name="nombre" placeholder="Tu Nombre" required>
+                </div>
+                <div class="input-group">
+                    <i class="fas fa-envelope"></i>
+                    <input type="email" name="email" placeholder="Correo Electrónico" required>
+                </div>
+                <div class="input-group">
+                    <i class="fas fa-lock"></i>
+                    <input type="password" name="password" id="reg-pass" placeholder="Crear Contraseña" required>
+                    <i class="fas fa-eye toggle-eye" onclick="togglePassword('reg-pass', this)"></i>
+                </div>
+                <button type="submit" class="submit-btn">Crear Cuenta</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Cambiar entre pestañas
+        function mostrarLogin() {
+            document.getElementById('login-form').style.display = 'flex';
+            document.getElementById('register-form').style.display = 'none';
+            document.getElementById('btn-login').classList.add('active');
+            document.getElementById('btn-register').classList.remove('active');
+        }
+
+        function mostrarRegistro() {
+            document.getElementById('login-form').style.display = 'none';
+            document.getElementById('register-form').style.display = 'flex';
+            document.getElementById('btn-login').classList.remove('active');
+            document.getElementById('btn-register').classList.add('active');
+        }
+
+        // --- FUNCIÓN DEL OJITO (NUEVO) ---
+        function togglePassword(inputId, icon) {
+            const input = document.getElementById(inputId);
+            
+            if (input.type === "password") {
+                input.type = "text"; // Mostrar contraseña
+                icon.classList.remove('fa-eye');
+                icon.classList.add('fa-eye-slash'); // Cambiar icono a "tachado"
+            } else {
+                input.type = "password"; // Ocultar contraseña
+                icon.classList.remove('fa-eye-slash');
+                icon.classList.add('fa-eye'); // Cambiar icono a normal
+            }
+        }
+    </script>
+</body>
+</html>
