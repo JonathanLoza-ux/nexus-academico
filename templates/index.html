@@ -23,10 +23,13 @@
         
         <aside class="sidebar">
             <div class="sidebar-header">
-                <i class="fas fa-brain logo-icon"></i>
-                <h2>NEXUS</h2>
-                <button id="close-sidebar-btn" onclick="toggleSidebar()">
-                    <i class="fas fa-times"></i>
+                <div class="brand-container">
+                    <i class="fas fa-brain logo-icon"></i>
+                    <h2>NEXUS</h2>
+                </div>
+
+                <button class="theme-btn-header" onclick="toggleTheme()">
+                    <i class="fas fa-moon"></i>
                 </button>
             </div>
 
@@ -55,12 +58,6 @@
                 </button>
                 <button class="nav-btn" onclick="seleccionarMateria('Programación')">
                     <i class="fas fa-code"></i> Programación
-                </button>
-            </div>
-
-            <div class="sidebar-footer">
-                <button class="nav-btn secondary" onclick="toggleTheme()">
-                    <i class="fas fa-moon"></i> Modo Oscuro
                 </button>
             </div>
         </aside>

@@ -76,7 +76,7 @@ function seleccionarMateria(materia) {
     if (window.innerWidth <= 768) {
         toggleSidebar();
     }
-    
+
     input.focus();
     // enviarMensaje(); // Descomenta esto si quieres que se envíe solo al hacer clic
 }
@@ -123,21 +123,17 @@ function filtrarMaterias() {
 /* --- MODO CLARO / OSCURO --- */
 function toggleTheme() {
     const body = document.body;
-    const icon = document.querySelector('.sidebar-footer i'); // El icono de la luna
-    const btnText = document.querySelector('.sidebar-footer .nav-btn'); // El texto del botón
+    // Buscamos el icono dentro del botón nuevo (.theme-btn-header)
+    const icon = document.querySelector('.theme-btn-header i'); 
 
-    // Alternar la clase en el cuerpo
     body.classList.toggle('light-mode');
 
-    // Cambiar el icono y texto según el estado
     if (body.classList.contains('light-mode')) {
         icon.classList.remove('fa-moon');
-        icon.classList.add('fa-sun'); // Cambiar a Sol
-        // Opcional: cambiar texto si quieres
-        // btnText.innerHTML = '<i class="fas fa-sun"></i> Modo Claro';
+        icon.classList.add('fa-sun');
     } else {
         icon.classList.remove('fa-sun');
-        icon.classList.add('fa-moon'); // Cambiar a Luna
+        icon.classList.add('fa-moon');
     }
 }
 

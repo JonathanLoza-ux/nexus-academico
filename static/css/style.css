@@ -307,17 +307,45 @@ a { color: var(--accent); }
     /* 2. BARRA LATERAL (SIDEBAR) CORREGIDA */
     .sidebar {
         position: fixed;
-        left: -100%;       /* Escondida totalmente a la izquierda */
+        left: -100%;
         top: 0;
-        width: 80%;        /* Que no ocupe toda la pantalla, solo el 80% */
-        height: 100dvh;    /* Altura completa del móvil */
+        /* CAMBIO AQUÍ: Ancho fijo más elegante (antes era 80%) */
+        width: 280px; 
+        height: 100dvh;
         z-index: 1000;
         transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         box-shadow: 5px 0 25px rgba(0,0,0,0.5);
-        
-        /* ESTO PERMITE EL SCROLL DENTRO DEL MENÚ SI ES MUY LARGO */
-        overflow-y: auto; 
+        overflow-y: auto;
     }
+
+    /* ESTILO PARA EL ENCABEZADO DEL MENÚ (Logo izq - Botón der) */
+    .sidebar-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between; /* Esto los separa a las esquinas */
+        margin-bottom: 20px;
+        padding-right: 5px; /* Un poco de espacio extra */
+    }
+
+    .brand-container {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--accent);
+    }
+
+    /* Estilo del botón de la Luna en el encabezado */
+    .theme-btn-header {
+        background: none;
+        border: none;
+        color: var(--text-dim);
+        font-size: 1.2rem;
+        cursor: pointer;
+        padding: 5px;
+    }
+    
+    /* Ocultar el botón X viejo si quedó algún rastro */
+    #close-sidebar-btn { display: none; }
 
     .sidebar.active {
         left: 0; /* Mostrar */
