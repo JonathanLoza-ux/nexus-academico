@@ -40,7 +40,7 @@ configuracion = {
 
 # Iniciamos el modelo LITE
 model = genai.GenerativeModel(
-    model_name='gemini-flash-lite-latest', 
+    model_name='gemini-flash-latest', 
     generation_config=configuracion,
     system_instruction=instruccion_sistema
 )

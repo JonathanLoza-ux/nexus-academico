@@ -1,4 +1,4 @@
-/* static/js/script.js - Versión Visual Final */
+/* static/js/script.js - Versión Final Blindada (Mate + Imágenes) */
 
 // --- VARIABLES GLOBALES ---
 
@@ -53,7 +53,7 @@ function seleccionarMateria(materia) {
     input.focus();
 }
 
-/* 5. ENVIAR MENSAJE (CON FOTO VISIBLE) */
+/* 5. ENVIAR MENSAJE */
 async function enviarMensaje() {
     const input = document.getElementById('user-input');
     const imageInput = document.getElementById('image-input'); 
@@ -72,23 +72,19 @@ async function enviarMensaje() {
         formData.append('image', imageInput.files[0]);
     }
 
-    // --- MOSTRAR MENSAJE EN PANTALLA ---
+    // --- MOSTRAR MENSAJE USUARIO ---
     if (hayImagen) {
-        // Si hay imagen, la leemos para mostrarla
         const reader = new FileReader();
         reader.onload = function(e) {
-            // Enviamos texto + la imagen en base64 para que se vea
             mostrarMensaje(mensaje, 'user', e.target.result);
-            postEnvio(); // Limpiar y scroll
+            postEnvio();
         };
         reader.readAsDataURL(imageInput.files[0]);
     } else {
-        // Solo texto
         mostrarMensaje(mensaje, 'user');
         postEnvio();
     }
 
-    // Función auxiliar para limpiar después de pintar el mensaje
     function postEnvio() {
         input.value = ''; 
         quitarImagen(); 
@@ -97,7 +93,7 @@ async function enviarMensaje() {
         hacerPeticion();
     }
 
-    // --- HACER LA PETICIÓN AL SERVIDOR ---
+    // --- PETICIÓN AL SERVIDOR ---
     async function hacerPeticion() {
         try {
             const respuesta = await fetch('/chat', {
@@ -109,7 +105,7 @@ async function enviarMensaje() {
 
             if (loader) loader.classList.add('hidden');
 
-            // Crear contenedor para la respuesta del bot
+            // Crear burbuja del bot
             const botDiv = document.createElement('div');
             botDiv.className = 'message bot-msg';
             const contentDiv = document.createElement('div');
@@ -117,17 +113,18 @@ async function enviarMensaje() {
             botDiv.appendChild(contentDiv);
             chatBox.appendChild(botDiv);
 
+            // Iniciar escritura con el nuevo renderizador
             typeWriter(contentDiv, data.response);
 
         } catch (error) {
             console.error('Error:', error);
             if (loader) loader.classList.add('hidden');
-            mostrarMensaje("Lo siento, tuve un error de conexión. Intenta de nuevo.", 'bot');
+            mostrarMensaje("Lo siento, tuve un error de conexión.", 'bot');
         }
     }
 }
 
-// Función para mostrar mensajes (Ahora con imágenes tamaño miniatura)
+/* 6. MOSTRAR MENSAJE (DOM) */
 function mostrarMensaje(texto, sender, imagenSrc = null) {
     const chatBox = document.getElementById('chat-box');
     const msgDiv = document.createElement('div');
@@ -136,35 +133,32 @@ function mostrarMensaje(texto, sender, imagenSrc = null) {
     const contentDiv = document.createElement('div');
     contentDiv.className = 'msg-content';
     
-    // 1. Si hay imagen, la agregamos (PERO PEQUEÑA)
     if (imagenSrc) {
         const img = document.createElement('img');
         img.src = imagenSrc;
-        
-        // --- CAMBIO AQUÍ: Limitar el tamaño ---
-        img.style.maxWidth = '100%';      // Que no se salga del ancho
-        img.style.maxHeight = '200px';    // Altura máxima de 200px (Miniatura)
-        img.style.objectFit = 'contain';  // Que no se deforme
+        img.style.maxWidth = '100%'; 
+        img.style.maxHeight = '200px'; 
+        img.style.objectFit = 'contain';
         img.style.borderRadius = '10px';
         img.style.marginBottom = '10px';
-        img.style.cursor = 'pointer';     // Manita al pasar el mouse
+        img.style.cursor = 'pointer';
         
-        // Opcional: Si le das clic, que se agrande (Zoom simple)
         img.onclick = function() { 
             if(this.style.maxHeight === '200px') {
-                this.style.maxHeight = 'none'; // Agrandar
+                this.style.maxHeight = 'none'; 
             } else {
-                this.style.maxHeight = '200px'; // Encoger
+                this.style.maxHeight = '200px'; 
             }
         };
 
         contentDiv.appendChild(img);
     }
 
-    // 2. Si hay texto, lo agregamos DEBAJO
     if (texto) {
         const textNode = document.createElement('div');
-        textNode.textContent = texto;
+        // Usamos el renderizador protegido si es mensaje de usuario (opcional)
+        // Pero generalmente el usuario no escribe markdown complejo.
+        textNode.textContent = texto; 
         contentDiv.appendChild(textNode);
     }
     
@@ -172,19 +166,66 @@ function mostrarMensaje(texto, sender, imagenSrc = null) {
     chatBox.appendChild(msgDiv);
 }
 
-/* 6. EFECTO DE ESCRITURA */
+/* 7. EL ESCUDO PROTECTOR (NUEVO) 🛡️ */
+function renderizarMarkdownConMate(texto) {
+    // Paso 1: Esconder las fórmulas matemáticas
+    // Buscamos bloques $$...$$ y $...$
+    const mathBlocks = [];
+    
+    // Proteger bloques $$...$$
+    let textoProtegido = texto.replace(/\$\$([\s\S]*?)\$\$/g, function(match) {
+        mathBlocks.push(match);
+        return "___MATH_BLOCK_" + (mathBlocks.length - 1) + "___";
+    });
+
+    // Proteger inline $...$
+    textoProtegido = textoProtegido.replace(/\$([^$]+)\$/g, function(match) {
+        mathBlocks.push(match);
+        return "___MATH_INLINE_" + (mathBlocks.length - 1) + "___";
+    });
+
+    // Paso 2: Convertir Markdown a HTML (Ahora Marked no romperá las mates)
+    let html = marked.parse(textoProtegido);
+
+    // Paso 3: Devolver las fórmulas a su lugar
+    html = html.replace(/___MATH_BLOCK_(\d+)___/g, function(match, id) {
+        return mathBlocks[id];
+    });
+    html = html.replace(/___MATH_INLINE_(\d+)___/g, function(match, id) {
+        return mathBlocks[id];
+    });
+
+    return html;
+}
+
+/* 8. EFECTO DE ESCRITURA MEJORADO */
 function typeWriter(element, text, index = 0) {
+    // Para evitar parpadeos con fórmulas, renderizamos trozos más grandes o usamos lógica simple.
+    // Esta versión usa el renderizador protegido.
+    
     if (index < text.length) {
-        element.innerHTML = marked.parse(text.substring(0, index + 1)); 
-        setTimeout(() => typeWriter(element, text, index + 1), 5); 
+        // Escribimos un poco más rápido (saltos de 2 caracteres)
+        const nextChunk = text.substring(0, index + 2);
+        element.innerHTML = renderizarMarkdownConMate(nextChunk);
+        
+        // Scroll suave al final
+        const chatBox = document.getElementById('chat-box');
+        // Solo bajar si estamos cerca del final
+        if(chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 100){
+             chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        setTimeout(() => typeWriter(element, text, index + 2), 5); 
     } else {
+        // Renderizado final completo y Matemáticas
+        element.innerHTML = renderizarMarkdownConMate(text);
         if (window.MathJax) {
             MathJax.typesetPromise([element]).catch((err) => console.log(err));
         }
     }
 }
 
-// Permitir Enter para enviar
+// Permitir Enter
 document.getElementById('user-input').addEventListener('keypress', function (e) {
     if (e.key === 'Enter') enviarMensaje();
 });
