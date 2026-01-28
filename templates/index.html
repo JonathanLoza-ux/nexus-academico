@@ -15,7 +15,7 @@
     </script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
     
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
 
@@ -71,15 +71,15 @@
             <h3>Asistente Virtual</h3>
             
             <div class="user-profile-area profile-dropdown" onclick="toggleDropdown()">
-                <span class="user-name">{{ name }}</span>
+                <span class="user-name">Jonathan David Loza</span>
                 
                 <div class="profile-pic-placeholder">
-                    {{ name[0] | upper }}
+                    J
                 </div>
 
                 <div id="myDropdown" class="dropdown-content">
                     <div style="padding: 10px; text-align: center; color: var(--text-dim); font-size: 0.8rem; border-bottom: 1px solid var(--border);">
-                        {{ email }} </div>
+                        jonathandavidloza@gmail.com </div>
                     
                     <a href="https://wa.me/50364254348" target="_blank">
                         <i class="fab fa-whatsapp" style="color: #25D366;"></i> Soporte Técnico
@@ -87,7 +87,7 @@
                     
                     <div class="dropdown-divider"></div>
                     
-                    <a href="{{ url_for('logout') }}" style="color: #ef4444;">
+                    <a href="/logout" style="color: #ef4444;">
                         <i class="fas fa-sign-out-alt"></i> Cerrar Sesión
                     </a>
                 </div>
@@ -97,7 +97,7 @@
             <div id="chat-box">
                 <div class="message bot-msg">
                     <div class="msg-content">
-                        ¡Hola, <strong>{{ name }}</strong>! Soy <strong>Nexus</strong>. Selecciona una materia del menú lateral para comenzar.
+                        ¡Hola, <strong>Jonathan David Loza</strong>! Soy <strong>Nexus</strong>. Selecciona una materia del menú lateral para comenzar.
                     </div>
                 </div>
             </div>
@@ -134,6 +134,6 @@
         
     </div>
 
-    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script src="/static/js/script.js"></script>
 </body>
 </html>

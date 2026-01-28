@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Acceso - Nexus</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body class="login-body">
 
@@ -18,15 +18,15 @@
 
         <div class="form-box">
             
-            {% with messages = get_flashed_messages(with_categories=true) %}
-                {% if messages %}
-                    {% for category, message in messages %}
-                        <div class="alert alert-{{ category }}">
-                            <i class="fas fa-exclamation-circle"></i> {{ message }}
+            
+                
+                    
+                        <div class="alert alert-message">
+                            <i class="fas fa-exclamation-circle"></i> Please log in to access this page.
                         </div>
-                    {% endfor %}
-                {% endif %}
-            {% endwith %}
+                    
+                
+            
 
             <div class="toggle-btns">
                 <button id="btn-login" class="active" onclick="mostrarLogin()">Iniciar Sesión</button>
