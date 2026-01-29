@@ -123,28 +123,28 @@ def login_page():
             
     return render_template('login.html')
 
-@app.route('/register', methods=['POST'])
+@app.route('/register', methods=['GET', 'POST'])
 def register():
+    # Si alguien entra por URL a /register, lo mandamos al login con la pestaña register
+    if request.method == 'GET':
+        return redirect(url_for('login_page', tab='register'))
+
     email = request.form.get('email')
     name = request.form.get('nombre')
     password = request.form.get('password')
 
-    # 1. Validar si ya existe
     if User.query.filter_by(email=email).first():
         flash('Correo en uso. Este correo ya está registrado, usa otro por favor.', 'error')
         return redirect(url_for('login_page', tab='register'))
 
-    # 2. Validar correo
     if not EMAIL_RE.match(email or ""):
         flash('Correo inválido. Usa un formato como nombre@dominio.com.', 'error')
         return redirect(url_for('login_page', tab='register'))
 
-    # 3. Validar contraseña (mínimo 6 y con símbolo)
     if not PASSWORD_RE.match(password or ""):
         flash('La contraseña debe tener al menos 6 caracteres e incluir un símbolo.', 'error')
         return redirect(url_for('login_page', tab='register'))
 
-    # Crear usuario
     new_user = User(email=email, name=name, password=generate_password_hash(password, method='scrypt'))
     db.session.add(new_user)
     db.session.commit()
