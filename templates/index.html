@@ -2,20 +2,16 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nexus Académico 2.0</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nexus - Asistente IA</title>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script>
-        window.MathJax = {
-            tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] }
-        };
-    </script>
+    <script>window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] } };</script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
     
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
 
@@ -27,79 +23,92 @@
                     <i class="fas fa-brain logo-icon"></i>
                     <h2>NEXUS</h2>
                 </div>
-
                 <button class="theme-btn-header" onclick="toggleTheme()">
                     <i class="fas fa-moon"></i>
                 </button>
             </div>
 
-            <div class="search-box">
-                <i class="fas fa-search"></i>
-                <input type="text" id="subject-search" placeholder="Buscar materia..." onkeyup="filtrarMaterias()">
+            <a href="{{ url_for('new_chat') }}" class="new-chat-btn">
+                <i class="fas fa-plus"></i> Nueva Conversación
+            </a>
+
+            <div class="conversations-list">
+                <p class="section-title">HISTORIAL</p>
+                {% for chat in conversations %}
+                <div class="chat-item-wrapper">
+                    <a href="{{ url_for('home', chat_id=chat.id) }}" class="chat-item {% if active_chat and active_chat.id == chat.id %}active{% endif %}">
+                        <i class="far fa-comment-alt"></i>
+                        <span>{{ chat.title }}</span>
+                    </a>
+                    <button class="delete-chat-btn" onclick="borrarChat(event, {{ chat.id }})">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+                {% endfor %}
             </div>
 
-            <div class="subject-list" id="subject-list">
-                <p class="section-title">MATERIAS</p>
-                
-                <button class="nav-btn" onclick="seleccionarMateria('Matemáticas')">
-                    <i class="fas fa-calculator"></i> Matemáticas
+            <div class="sidebar-footer">
+                <button class="explore-btn" onclick="toggleModal('subjectsModal')">
+                    <i class="fas fa-compass"></i> Explorar Categorías
                 </button>
-                <button class="nav-btn" onclick="seleccionarMateria('Historia')">
-                    <i class="fas fa-landmark"></i> Historia
-                </button>
-                <button class="nav-btn" onclick="seleccionarMateria('Ciencias')">
-                    <i class="fas fa-flask"></i> Ciencias
-                </button>
-                <button class="nav-btn" onclick="seleccionarMateria('Lenguaje')">
-                    <i class="fas fa-book-open"></i> Lenguaje
-                </button>
-                <button class="nav-btn" onclick="seleccionarMateria('Inglés')">
-                    <i class="fas fa-language"></i> Inglés
-                </button>
-                <button class="nav-btn" onclick="seleccionarMateria('Programación')">
-                    <i class="fas fa-code"></i> Programación
-                </button>
+                <div class="copyright-text">© 2026 Jonathan Loza</div>
             </div>
         </aside>
 
         <main class="chat-area">
             <header class="chat-header">
-            <button id="menu-btn" onclick="toggleSidebar()">
-                <i class="fas fa-bars"></i>
-            </button>
-            
-            <h3>Asistente Virtual</h3>
-            
-            <div class="user-profile-area profile-dropdown" onclick="toggleDropdown()">
-                <span class="user-name">Jonathan David Loza</span>
+                <button id="menu-btn" onclick="toggleSidebar()">
+                    <i class="fas fa-bars"></i>
+                </button>
                 
-                <div class="profile-pic-placeholder">
-                    J
-                </div>
-
-                <div id="myDropdown" class="dropdown-content">
-                    <div style="padding: 10px; text-align: center; color: var(--text-dim); font-size: 0.8rem; border-bottom: 1px solid var(--border);">
-                        jonathandavidloza@gmail.com </div>
+                <h3 class="app-title">Asistente Virtual</h3>
+                
+                <div class="user-profile-area profile-dropdown" onclick="toggleDropdown()">
+                    <div class="profile-pic-placeholder">
+                        {{ name[0] | upper }}
+                    </div>
                     
-                    <a href="https://wa.me/50364254348" target="_blank">
-                        <i class="fab fa-whatsapp" style="color: #25D366;"></i> Soporte Técnico
-                    </a>
-                    
-                    <div class="dropdown-divider"></div>
-                    
-                    <a href="/logout" style="color: #ef4444;">
-                        <i class="fas fa-sign-out-alt"></i> Cerrar Sesión
-                    </a>
-                </div>
-            </div>
-        </header>
-
-            <div id="chat-box">
-                <div class="message bot-msg">
-                    <div class="msg-content">
-                        ¡Hola, <strong>Jonathan David Loza</strong>! Soy <strong>Nexus</strong>. Selecciona una materia del menú lateral para comenzar.
+                    <div id="myDropdown" class="dropdown-content">
+                        <div class="dropdown-header-info">
+                            <strong>{{ name }}</strong>
+                            <small>{{ email }}</small>
+                        </div>
+                        <a href="https://wa.me/50364254348" target="_blank">
+                            <i class="fab fa-whatsapp" style="color: #25D366;"></i> Soporte Técnico
+                        </a>
+                        <div class="dropdown-divider"></div>
+                        <a href="{{ url_for('logout') }}" style="color: #ef4444;">
+                            <i class="fas fa-sign-out-alt"></i> Cerrar Sesión
+                        </a>
                     </div>
                 </div>
+            </header>
+
+            <div id="chat-box">
+                {% if not chat_history %}
+                <div class="empty-state">
+                    <div class="logo-big"><i class="fas fa-brain"></i></div>
+                    <h2>¡Hola, {{ name.split()[0] }}!</h2>
+                    <p>¿Qué quieres aprender hoy?</p>
+                    <div class="suggestion-chips">
+                        <button onclick="usarPrompt('Ayúdame con Matemáticas')">📐 Matemáticas</button>
+                        <button onclick="usarPrompt('Explícame un tema de Historia')">🏛️ Historia</button>
+                        <button onclick="usarPrompt('Ayúdame a programar en Python')">💻 Programación</button>
+                    </div>
+                </div>
+                {% endif %}
+
+                {% for msg in chat_history %}
+                    <div class="message {{ msg.sender }}-msg">
+                        <div class="msg-content">
+                            {% if msg.has_image %}
+                            <div class="img-badge"><i class="fas fa-image"></i> Imagen enviada</div>
+                            {% endif %}
+                            <span class="history-content" style="display:none;">{{ msg.content }}</span>
+                            <div class="rendered-text">Cargando...</div>
+                        </div>
+                    </div>
+                {% endfor %}
             </div>
 
             <div id="loading-indicator" class="hidden">
@@ -107,33 +116,159 @@
             </div>
 
             <div id="image-preview-container" class="hidden">
-                <div class="preview-wrapper">
-                    <img id="image-preview" src="" alt="Vista previa">
-                    <button onclick="quitarImagen()" class="close-preview-btn">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
+                <img id="image-preview" src="" alt="Vista previa">
+                <button class="close-preview-btn" onclick="quitarImagen()">
+                    <i class="fas fa-times"></i>
+                </button>
             </div>
 
             <div id="input-area">
+                <input type="hidden" id="current-chat-id" value="{{ active_chat.id if active_chat else '' }}">
+                
                 <input type="file" id="image-input" accept="image/*" style="display: none;" onchange="mostrarVistaPrevia()">
                 
                 <button class="attach-btn" onclick="document.getElementById('image-input').click()">
                     <i class="fas fa-paperclip"></i>
                 </button>
 
-                <input type="text" id="user-input" placeholder="Escribe o sube una foto...">
+                <input type="text" id="user-input" placeholder="Escribe un mensaje..." autocomplete="off">
                 
-                <button onclick="enviarMensaje()">
+                <button class="send-btn" onclick="enviarMensaje()">
                     <i class="fas fa-paper-plane"></i>
                 </button>
             </div>
+
+            <!-- ✅ TOAST / NOTIFICACIÓN -->
+            <div id="toast" class="toast hidden">
+                <i class="fa-solid fa-circle-check"></i>
+                <span id="toastText">Listo</span>
+            </div>
         </main>
 
+        <div id="subjectsModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>🧭 Explorar Categorías</h2>
+                    <span class="close-modal" onclick="toggleModal('subjectsModal')">&times;</span>
+                </div>
+                <div class="modal-body">
+                    
+                    <div class="category-group">
+                        <h3>🔬 Ciencias Exactas</h3>
+                        <div class="chips-grid">
+                            <button onclick="seleccionarMateria('Matemáticas')">Matemáticas</button>
+                            <button onclick="seleccionarMateria('Física')">Física</button>
+                            <button onclick="seleccionarMateria('Química')">Química</button>
+                            <button onclick="seleccionarMateria('Biología')">Biología</button>
+                            <button onclick="seleccionarMateria('Estadística')">Estadística</button>
+                        </div>
+                    </div>
+
+                    <div class="category-group">
+                        <h3>💻 Tecnología</h3>
+                        <div class="chips-grid">
+                            <button onclick="seleccionarMateria('Programación')">Programación</button>
+                            <button onclick="seleccionarMateria('Inteligencia Artificial')">IA</button>
+                            <button onclick="seleccionarMateria('Ciberseguridad')">Ciberseguridad</button>
+                            <button onclick="seleccionarMateria('Desarrollo Web')">Web Dev</button>
+                            <button onclick="seleccionarMateria('Bases de Datos')">Bases de Datos</button>
+                        </div>
+                    </div>
+
+                    <div class="category-group">
+                        <h3>📚 Humanidades</h3>
+                        <div class="chips-grid">
+                            <button onclick="seleccionarMateria('Historia')">Historia</button>
+                            <button onclick="seleccionarMateria('Literatura')">Literatura</button>
+                            <button onclick="seleccionarMateria('Filosofía')">Filosofía</button>
+                            <button onclick="seleccionarMateria('Geografía')">Geografía</button>
+                        </div>
+                    </div>
+                    
+                    <div class="category-group">
+                        <h3>💼 Negocios</h3>
+                        <div class="chips-grid">
+                            <button onclick="seleccionarMateria('Economía')">Economía</button>
+                            <button onclick="seleccionarMateria('Contabilidad')">Contabilidad</button>
+                            <button onclick="seleccionarMateria('Marketing')">Marketing</button>
+                        </div>
+                    </div>
+
+                    <div class="category-group">
+                        <h3>🌍 Idiomas</h3>
+                        <div class="chips-grid">
+                            <button onclick="seleccionarMateria('Inglés')">Inglés</button>
+                            <button onclick="seleccionarMateria('Francés')">Francés</button>
+                            <button onclick="seleccionarMateria('Portugués')">Portugués</button>
+                            <button onclick="seleccionarMateria('Italiano')">Italiano</button>
+                        </div>
+                    </div>
+
+                    <div class="category-group">
+                        <h3>🎨 Artes y Creatividad</h3>
+                        <div class="chips-grid">
+                            <button onclick="seleccionarMateria('Música')">Música</button>
+                            <button onclick="seleccionarMateria('Arte')">Arte</button>
+                            <button onclick="seleccionarMateria('Diseño')">Diseño</button>
+                            <button onclick="seleccionarMateria('Fotografía')">Fotografía</button>
+                        </div>
+                    </div>
+
+                    <div class="category-group">
+                        <h3>🧠 Salud y Bienestar</h3>
+                        <div class="chips-grid">
+                            <button onclick="seleccionarMateria('Psicología')">Psicología</button>
+                            <button onclick="seleccionarMateria('Nutrición')">Nutrición</button>
+                            <button onclick="seleccionarMateria('Anatomía')">Anatomía</button>
+                            <button onclick="seleccionarMateria('Hábitos saludables')">Hábitos</button>
+                        </div>
+                    </div>
+
+                    <div class="category-group">
+                        <h3>⚖️ Sociedad y Derecho</h3>
+                        <div class="chips-grid">
+                            <button onclick="seleccionarMateria('Derecho')">Derecho</button>
+                            <button onclick="seleccionarMateria('Ética')">Ética</button>
+                            <button onclick="seleccionarMateria('Sociología')">Sociología</button>
+                            <button onclick="seleccionarMateria('Civismo')">Civismo</button>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
         <div id="overlay" onclick="toggleSidebar()"></div>
-        
     </div>
 
-    <script src="/static/js/script.js"></script>
+    <!-- ✅ MODAL: Confirmar eliminación de chat -->
+<div id="deleteModal" class="modal">
+    <div class="modal-content" style="max-width: 420px;">
+        <div class="modal-header">
+            <h2 style="margin:0;">🗑️ Eliminar conversación</h2>
+            <span class="close-modal" onclick="cerrarDeleteModal()">&times;</span>
+        </div>
+
+        <div class="modal-body">
+            <p style="margin-top:0; color: var(--text-dim);">
+                ¿Estás seguro? Esta acción <b>no se puede deshacer</b>.
+            </p>
+
+            <label class="confirm-check">
+                <input type="checkbox" id="deleteCheck">
+                Sí, estoy seguro de eliminarla.
+            </label>
+        </div>
+
+        <div class="confirm-actions">
+            <button class="btn-cancel" onclick="cerrarDeleteModal()">Cancelar</button>
+            <button class="btn-danger" id="btnDeleteConfirm" disabled onclick="confirmarEliminarChat()">
+                Eliminar
+            </button>
+        </div>
+    </div>
+</div>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
 </html>

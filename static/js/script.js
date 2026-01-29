@@ -1,219 +1,246 @@
-/* static/js/script.js - Versión Corregida (Mate + Dropdown + Móvil) */
+/* script.js - Final */
 
-// --- MENÚ DROPDOWN DEL PERFIL ---
-function toggleDropdown() {
-    document.getElementById("myDropdown").classList.toggle("show");
-}
-
-// Cerrar el menú si se hace clic fuera
-window.onclick = function(event) {
-    if (!event.target.closest('.profile-dropdown')) {
-        var dropdowns = document.getElementsByClassName("dropdown-content");
-        for (var i = 0; i < dropdowns.length; i++) {
-            var openDropdown = dropdowns[i];
-            if (openDropdown.classList.contains('show')) {
-                openDropdown.classList.remove('show');
-            }
-        }
-    }
-}
-
-// --- VARIABLES GLOBALES Y MENÚ LATERAL ---
-function toggleSidebar() {
-    const sidebar = document.querySelector('.sidebar');
-    const overlay = document.getElementById('overlay');
-    if (window.innerWidth <= 768) {
-        sidebar.classList.toggle('active');
-        if (overlay) overlay.classList.toggle('active');
-    } else {
-        sidebar.classList.toggle('closed');
-    }
-}
-
-function toggleTheme() {
-    const body = document.body;
+function toggleModal(modalId) { document.getElementById(modalId).classList.toggle('show'); }
+function toggleDropdown() { document.getElementById("myDropdown")?.classList.toggle('show'); }
+function updateThemeIcon() {
     const icon = document.querySelector('.theme-btn-header i');
-    body.classList.toggle('light-mode');
-    if (body.classList.contains('light-mode')) {
-        if(icon) { icon.classList.remove('fa-moon'); icon.classList.add('fa-sun'); }
+    if (!icon) return;
+    if (document.body.classList.contains('light-mode')) {
+        icon.classList.remove('fa-moon');
+        icon.classList.add('fa-sun');
     } else {
-        if(icon) { icon.classList.remove('fa-sun'); icon.classList.add('fa-moon'); }
+        icon.classList.remove('fa-sun');
+        icon.classList.add('fa-moon');
     }
 }
+function applyTheme(theme) {
+    document.body.classList.toggle('light-mode', theme === 'light');
+    updateThemeIcon();
+    localStorage.setItem('theme', theme);
+}
+function toggleTheme() {
+    const isLight = document.body.classList.contains('light-mode');
+    applyTheme(isLight ? 'dark' : 'light');
+}
+function toggleSidebar() {
+    const sb = document.querySelector('.sidebar');
+    const ov = document.getElementById('overlay');
+    if (window.innerWidth <= 768) {
+        sb.classList.toggle('active');
+        if(ov) ov.classList.toggle('active');
+    } else { sb.classList.toggle('closed'); }
+}
 
-function filtrarMaterias() {
-    const input = document.getElementById('subject-search');
-    const filtro = input.value.toLowerCase();
-    const botones = document.getElementById('subject-list').getElementsByClassName('nav-btn');
-    for (let i = 0; i < botones.length; i++) {
-        const texto = botones[i].textContent || botones[i].innerText;
-        botones[i].style.display = texto.toLowerCase().indexOf(filtro) > -1 ? "" : "none";
-    }
+window.onclick = function(e) {
+    if(e.target == document.getElementById('subjectsModal')) toggleModal('subjectsModal');
+    if(!e.target.closest('.profile-dropdown')) document.getElementById("myDropdown")?.classList.remove('show');
 }
 
 function seleccionarMateria(materia) {
-    const input = document.getElementById('user-input');
-    input.value = "Quiero aprender sobre " + materia + ". ¿Por dónde empezamos?";
-    if (window.innerWidth <= 768) toggleSidebar();
-    input.focus();
+    toggleModal('subjectsModal');
+    usarPrompt("Quiero aprender sobre " + materia + ". ¿Por dónde empezamos?");
 }
 
-// --- ENVIAR MENSAJE ---
+function usarPrompt(texto) {
+    const inp = document.getElementById('user-input');
+    inp.value = texto;
+    if(window.innerWidth<=768) toggleSidebar();
+    inp.focus();
+    enviarMensaje();
+}
+
 async function enviarMensaje() {
-    const input = document.getElementById('user-input');
-    const imageInput = document.getElementById('image-input'); 
-    const mensaje = input.value.trim();
+    const inp = document.getElementById('user-input');
+    const imgInp = document.getElementById('image-input');
+    const msg = inp.value.trim();
     const chatBox = document.getElementById('chat-box');
     const loader = document.getElementById('loading-indicator');
-    
-    const hayImagen = imageInput.files && imageInput.files.length > 0;
+    const chatId = document.getElementById('current-chat-id').value;
 
-    if (!mensaje && !hayImagen) return;
+    const hasImg = imgInp.files && imgInp.files.length > 0;
+    const file = hasImg ? imgInp.files[0] : null; // ✅ guardar archivo ANTES de limpiar
 
-    // Preparar datos
-    const formData = new FormData();
-    formData.append('message', mensaje);
-    if (hayImagen) formData.append('image', imageInput.files[0]);
+    if (!msg && !file) return;
 
-    // Mostrar mensaje usuario (con foto si hay)
-    if (hayImagen) {
+    document.querySelector('.empty-state')?.remove();
+
+    // UI Local
+    if (file) {
         const reader = new FileReader();
-        reader.onload = function(e) {
-            mostrarMensaje(mensaje, 'user', e.target.result);
-            postEnvio();
-        };
-        reader.readAsDataURL(imageInput.files[0]);
+        reader.onload = e => mostrarMensaje(msg, 'user', e.target.result);
+        reader.readAsDataURL(file);
     } else {
-        mostrarMensaje(mensaje, 'user');
-        postEnvio();
+        mostrarMensaje(msg, 'user');
     }
 
-    function postEnvio() {
-        input.value = ''; 
-        quitarImagen(); 
-        chatBox.scrollTop = chatBox.scrollHeight;
-        if (loader) loader.classList.remove('hidden');
-        hacerPeticion();
-    }
+    const textToSend = inp.value;
+    inp.value = '';
+    chatBox.scrollTop = chatBox.scrollHeight;
+    loader.classList.remove('hidden');
 
-    async function hacerPeticion() {
-        try {
-            const respuesta = await fetch('/chat', { method: 'POST', body: formData });
-            const data = await respuesta.json();
-            if (loader) loader.classList.add('hidden');
+    const fd = new FormData();
+    fd.append('message', textToSend);
+    fd.append('chat_id', chatId);
+    if (file) fd.append('image', file); // ✅ ahora sí viaja la imagen
 
-            const botDiv = document.createElement('div');
-            botDiv.className = 'message bot-msg';
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'msg-content';
-            botDiv.appendChild(contentDiv);
-            chatBox.appendChild(botDiv);
+    // ✅ ya podemos limpiar preview
+    if (file) quitarImagen();
 
-            // Usamos la nueva función de escritura protegida
-            typeWriter(contentDiv, data.response);
+    try {
+        const res = await fetch('/chat', { method:'POST', body:fd });
+        const data = await res.json();
 
-        } catch (error) {
-            console.error(error);
-            if (loader) loader.classList.add('hidden');
-            mostrarMensaje("Error de conexión.", 'bot');
+        loader.classList.add('hidden');
+
+        if(data.chat_id && chatId == '') {
+            window.location.href = `/c/${data.chat_id}`;
+            return;
         }
+
+        const div = document.createElement('div');
+        div.className = 'message bot-msg';
+        const content = document.createElement('div');
+        content.className = 'msg-content';
+        div.appendChild(content);
+        chatBox.appendChild(div);
+
+        typeWriter(content, data.response);
+
+    } catch (e) {
+        loader.classList.add('hidden');
+        mostrarMensaje("Error de conexión.", 'bot');
     }
 }
 
-function mostrarMensaje(texto, sender, imagenSrc = null) {
-    const chatBox = document.getElementById('chat-box');
-    const msgDiv = document.createElement('div');
-    msgDiv.className = `message ${sender}-msg`;
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'msg-content';
+function mostrarMensaje(txt, sender, img=null) {
+    const box = document.getElementById('chat-box');
+    const div = document.createElement('div');
+    div.className = `message ${sender}-msg`;
+    const content = document.createElement('div');
+    content.className = 'msg-content';
     
-    if (imagenSrc) {
-        const img = document.createElement('img');
-        img.src = imagenSrc;
-        img.style.maxWidth = '100%'; 
-        img.style.maxHeight = '200px'; 
-        img.style.objectFit = 'contain';
-        img.style.borderRadius = '10px';
-        img.style.marginBottom = '10px';
-        img.style.cursor = 'pointer';
-        img.onclick = function() { this.style.maxHeight = this.style.maxHeight === '200px' ? 'none' : '200px'; };
-        contentDiv.appendChild(img);
+    if(img) {
+        const i = document.createElement('img');
+        i.src = img;
+        i.className = "chat-image";
+        content.appendChild(i);
     }
-
-    if (texto) {
-        const textNode = document.createElement('div');
-        textNode.textContent = texto; 
-        contentDiv.appendChild(textNode);
-    }
-    msgDiv.appendChild(contentDiv);
-    chatBox.appendChild(msgDiv);
-}
-
-// --- ESCUDO PROTECTOR DE MATEMÁTICAS V2.0 (Token seguro) ---
-function renderizarMarkdownConMate(texto) {
-    const mathBlocks = [];
+    if(txt) content.textContent = txt;
     
-    // 1. Proteger $$...$$ con un token SIN CARACTERES RAROS (solo letras)
-    let textoProtegido = texto.replace(/\$\$([\s\S]*?)\$\$/g, function(match) {
-        mathBlocks.push(match);
-        return "TOKENMATHBLOCK" + (mathBlocks.length - 1) + "ENDTOKEN";
-    });
-
-    // 2. Proteger $...$
-    textoProtegido = textoProtegido.replace(/\$([^$]+)\$/g, function(match) {
-        mathBlocks.push(match);
-        return "TOKENMATHINLINE" + (mathBlocks.length - 1) + "ENDTOKEN";
-    });
-
-    // 3. Renderizar Markdown (Ahora Marked no tocará nuestros tokens)
-    let html = marked.parse(textoProtegido);
-
-    // 4. Restaurar fórmulas
-    html = html.replace(/TOKENMATHBLOCK(\d+)ENDTOKEN/g, function(match, id) {
-        return mathBlocks[id];
-    });
-    html = html.replace(/TOKENMATHINLINE(\d+)ENDTOKEN/g, function(match, id) {
-        return mathBlocks[id];
-    });
-
-    return html;
+    div.appendChild(content);
+    box.appendChild(div);
 }
 
-function typeWriter(element, text, index = 0) {
-    // Escribimos un poco más rápido
-    if (index < text.length) {
-        const nextChunk = text.substring(0, index + 5); // Bloques de 5 letras
-        element.innerHTML = renderizarMarkdownConMate(nextChunk);
-        
-        const chatBox = document.getElementById('chat-box');
-        if(chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 150){
-             chatBox.scrollTop = chatBox.scrollHeight;
-        }
-
-        setTimeout(() => typeWriter(element, text, index + 5), 1); 
-    } else {
-        element.innerHTML = renderizarMarkdownConMate(text);
-        if (window.MathJax) {
-            MathJax.typesetPromise([element]).catch((err) => console.log(err));
-        }
-    }
+function quitarImagen() {
+    document.getElementById('image-input').value = '';
+    document.getElementById('image-preview-container').classList.add('hidden');
 }
-
-document.getElementById('user-input').addEventListener('keypress', function (e) {
-    if (e.key === 'Enter') enviarMensaje();
-});
 
 function mostrarVistaPrevia() {
-    const input = document.getElementById('image-input');
-    const previewContainer = document.getElementById('image-preview-container');
-    const previewImage = document.getElementById('image-preview');
-    if (input.files && input.files[0]) {
+    const inp = document.getElementById('image-input');
+    if(inp.files && inp.files[0]) {
         const reader = new FileReader();
-        reader.onload = function(e) { previewImage.src = e.target.result; previewContainer.classList.remove('hidden'); }
-        reader.readAsDataURL(input.files[0]);
+        reader.onload = e => {
+            document.getElementById('image-preview').src = e.target.result;
+            document.getElementById('image-preview-container').classList.remove('hidden');
+        }
+        reader.readAsDataURL(inp.files[0]);
     }
 }
-function quitarImagen() {
-    document.getElementById('image-input').value = ''; 
-    document.getElementById('image-preview-container').classList.add('hidden'); 
+
+async function borrarChat(e, id) {
+    e.preventDefault(); e.stopPropagation();
+    if(!confirm("¿Estás seguro? Esta acción no se puede disolver.")) return;
+    
+    await fetch(`/delete_chat/${id}`, { method:'POST' });
+    window.location.href = '/';
+}
+
+let deleteChatId = null;
+
+function abrirDeleteModal(id){
+    deleteChatId = id;
+    const modal = document.getElementById("deleteModal");
+    const check = document.getElementById("deleteCheck");
+    const btn = document.getElementById("btnDeleteConfirm");
+
+    if(check) check.checked = false;
+    if(btn) btn.disabled = true;
+
+    modal?.classList.add("show");
+
+    check?.addEventListener("change", () => {
+        btn.disabled = !check.checked;
+    }, { once:false });
+}
+
+function cerrarDeleteModal(){
+    document.getElementById("deleteModal")?.classList.remove("show");
+    deleteChatId = null;
+}
+
+async function confirmarEliminarChat(){
+    if(!deleteChatId) return;
+    await fetch(`/delete_chat/${deleteChatId}`, { method:'POST' });
+    cerrarDeleteModal();
+    showToast("✅ Chat eliminado");
+    setTimeout(()=> window.location.href = '/', 700);
+}
+
+// ✅ Reemplaza tu borrarChat para abrir el modal
+async function borrarChat(e, id) {
+    e.preventDefault();
+    e.stopPropagation();
+    abrirDeleteModal(id);
+}
+
+// ✅ Cerrar modal si das click afuera
+window.addEventListener("click", (e) => {
+    if(e.target === document.getElementById("deleteModal")) cerrarDeleteModal();
+});
+
+function typeWriter(el, txt, i=0) {
+    if(i < txt.length) {
+        el.innerHTML = marked.parse(txt.substring(0, i+5));
+        document.getElementById('chat-box').scrollTop = document.getElementById('chat-box').scrollHeight;
+        setTimeout(()=>typeWriter(el, txt, i+5), 1);
+    } else {
+        el.innerHTML = marked.parse(txt);
+        if(window.MathJax) MathJax.typesetPromise([el]);
+    }
+}
+
+function renderHistoryMessages() {
+    document.querySelectorAll('.history-content').forEach(h=>{
+        if (!window.marked) return;
+        h.nextElementSibling.innerHTML = marked.parse(h.textContent);
+        if(window.MathJax) MathJax.typesetPromise([h.nextElementSibling]);
+    });
+}
+
+document.addEventListener("DOMContentLoaded", ()=>{
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme) applyTheme(savedTheme);
+    else updateThemeIcon();
+
+    renderHistoryMessages();
+    const box = document.getElementById('chat-box');
+    if(box) box.scrollTop = box.scrollHeight;
+    
+    document.getElementById('user-input')?.addEventListener('keypress', e=>{
+        if(e.key === 'Enter') enviarMensaje();
+    });
+});
+
+window.addEventListener('pageshow', () => {
+    renderHistoryMessages();
+});
+
+function showToast(text, ms=1800){
+    const t = document.getElementById("toast");
+    const tt = document.getElementById("toastText");
+    if(!t || !tt) return;
+    tt.textContent = text;
+    t.classList.remove("hidden");
+    setTimeout(()=> t.classList.add("hidden"), ms);
 }

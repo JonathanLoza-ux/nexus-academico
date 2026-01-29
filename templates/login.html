@@ -17,16 +17,15 @@
         </div>
 
         <div class="form-box">
-            
-            
-                
-                    
-                        <div class="alert alert-message">
-                            <i class="fas fa-exclamation-circle"></i> Please log in to access this page.
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert {{ category }}">
+                            <i class="fas fa-exclamation-circle"></i> {{ message }}
                         </div>
-                    
-                
-            
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
 
             <div class="toggle-btns">
                 <button id="btn-login" class="active" onclick="mostrarLogin()">Iniciar Sesión</button>
@@ -36,11 +35,11 @@
             <form id="login-form" action="/login" method="POST">
                 <div class="input-group">
                     <i class="fas fa-envelope"></i>
-                    <input type="email" name="email" placeholder="Correo Electrónico" required>
+                    <input type="email" name="email" placeholder="Correo Electrónico" autocomplete="email" required>
                 </div>
                 <div class="input-group">
                     <i class="fas fa-lock"></i>
-                    <input type="password" name="password" id="login-pass" placeholder="Contraseña" required>
+                    <input type="password" name="password" id="login-pass" placeholder="Contraseña" autocomplete="current-password" required>
                     <i class="fas fa-eye toggle-eye" onclick="togglePassword('login-pass', this)"></i>
                 </div>
                 <button type="submit" class="submit-btn">Entrar</button>
@@ -53,12 +52,20 @@
                 </div>
                 <div class="input-group">
                     <i class="fas fa-envelope"></i>
-                    <input type="email" name="email" placeholder="Correo Electrónico" required>
+                    <input type="email" name="email" placeholder="Correo Electrónico" autocomplete="email" required>
                 </div>
                 <div class="input-group">
                     <i class="fas fa-lock"></i>
-                    <input type="password" name="password" id="reg-pass" placeholder="Crear Contraseña" required>
+                    <input type="password" name="password" id="reg-pass" placeholder="Crear Contraseña"
+                           pattern="^(?=.*[A-Za-z])(?=.*[^A-Za-z0-9]).{6,}$"
+                           title="Mínimo 6 caracteres e incluye un símbolo (por ejemplo: -, _, !)."
+                           autocomplete="new-password" required>
                     <i class="fas fa-eye toggle-eye" onclick="togglePassword('reg-pass', this)"></i>
+                </div>
+                <div id="pass-rules" class="pass-rules hidden">
+                    <div class="rule" data-rule="len"><i class="fa-regular fa-circle"></i> Mínimo 6 caracteres</div>
+                    <div class="rule" data-rule="let"><i class="fa-regular fa-circle"></i> Incluye una letra (A-Z)</div>
+                    <div class="rule" data-rule="sym"><i class="fa-regular fa-circle"></i> Incluye un símbolo (-, _, !, etc.)</div>
                 </div>
                 <button type="submit" class="submit-btn">Crear Cuenta</button>
             </form>
@@ -95,6 +102,90 @@
                 icon.classList.add('fa-eye'); // Cambiar icono a normal
             }
         }
+
+        // Cambiar entre pestañas
+    function mostrarLogin() {
+        document.getElementById('login-form').style.display = 'flex';
+        document.getElementById('register-form').style.display = 'none';
+        document.getElementById('btn-login').classList.add('active');
+        document.getElementById('btn-register').classList.remove('active');
+    }
+
+    function mostrarRegistro() {
+        document.getElementById('login-form').style.display = 'none';
+        document.getElementById('register-form').style.display = 'flex';
+        document.getElementById('btn-login').classList.remove('active');
+        document.getElementById('btn-register').classList.add('active');
+    }
+
+    // --- FUNCIÓN DEL OJITO ---
+    function togglePassword(inputId, icon) {
+        const input = document.getElementById(inputId);
+        if (input.type === "password") {
+            input.type = "text";
+            icon.classList.remove('fa-eye');
+            icon.classList.add('fa-eye-slash');
+        } else {
+            input.type = "password";
+            icon.classList.remove('fa-eye-slash');
+            icon.classList.add('fa-eye');
+        }
+    }
+
+    // ✅ Mantener pestaña activa por URL (?tab=register)
+    document.addEventListener("DOMContentLoaded", () => {
+        const tab = new URLSearchParams(window.location.search).get("tab");
+        if (tab === "register") mostrarRegistro();
+        else mostrarLogin();
+
+        // ✅ Checklist dinámico de contraseña
+        const regPass = document.getElementById("reg-pass");
+        const rulesBox = document.getElementById("pass-rules");
+
+        if (regPass && rulesBox) {
+            const setRule = (key, ok) => {
+                const el = rulesBox.querySelector(`[data-rule="${key}"]`);
+                if (!el) return;
+                const icon = el.querySelector("i");
+                el.classList.toggle("ok", ok);
+                el.classList.toggle("bad", !ok);
+                if (icon) {
+                    icon.className = ok ? "fa-solid fa-check" : "fa-regular fa-circle";
+                }
+            };
+
+            const validate = (p) => ({
+                len: (p || "").length >= 6,
+                let: /[A-Za-z]/.test(p || ""),
+                sym: /[^A-Za-z0-9]/.test(p || "")
+            });
+
+            const render = () => {
+                const v = validate(regPass.value);
+                setRule("len", v.len);
+                setRule("let", v.let);
+                setRule("sym", v.sym);
+
+                const allOk = v.len && v.let && v.sym;
+                rulesBox.classList.toggle("valid", allOk);
+            };
+
+            regPass.addEventListener("focus", () => {
+                rulesBox.classList.remove("hidden");
+                render();
+            });
+
+            regPass.addEventListener("input", () => {
+                rulesBox.classList.remove("hidden");
+                render();
+            });
+
+            regPass.addEventListener("blur", () => {
+                const v = validate(regPass.value);
+                if (v.len && v.let && v.sym) rulesBox.classList.add("hidden");
+            });
+        }
+    });
     </script>
 </body>
 </html>
