@@ -35,7 +35,7 @@
             <div class="conversations-list">
                 <p class="section-title">HISTORIAL</p>
                 {% for chat in conversations %}
-                <div class="chat-item-wrapper">
+                <div class="chat-item-wrapper" id="chat-item-{{ chat.id }}">
                     <a href="{{ url_for('home', chat_id=chat.id) }}" class="chat-item {% if active_chat and active_chat.id == chat.id %}active{% endif %}">
                         <i class="far fa-comment-alt"></i>
                         <span>{{ chat.title }}</span>

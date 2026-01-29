@@ -1,5 +1,9 @@
 /* script.js - Final */
 
+// ✅ Variables globales para eliminación
+let deleteChatId = null;
+let isDeleting = false;
+
 function toggleModal(modalId) { document.getElementById(modalId).classList.toggle('show'); }
 function openModal(id){ document.getElementById(id)?.classList.add('show'); }
 function closeModal(id){ document.getElementById(id)?.classList.remove('show'); }
@@ -166,16 +170,6 @@ function mostrarVistaPrevia() {
     }
 }
 
-async function borrarChat(e, id) {
-    e.preventDefault(); e.stopPropagation();
-    if(!confirm("¿Estás seguro? Esta acción no se puede disolver.")) return;
-    
-    await fetch(`/delete_chat/${id}`, { method:'POST' });
-    window.location.href = '/';
-}
-
-let deleteChatId = null;
-
 function abrirDeleteModal(id){
     deleteChatId = id;
     const modal = document.getElementById("deleteModal");
@@ -183,29 +177,95 @@ function abrirDeleteModal(id){
     const btn = document.getElementById("btnDeleteConfirm");
 
     if(check) check.checked = false;
-    if(btn) btn.disabled = true;
+    if(btn){
+        btn.disabled = true;
+        btn.dataset.originalText = btn.innerHTML; // guardar texto original
+        btn.innerHTML = "Eliminar";
+    }
 
     modal?.classList.add("show");
-
-    check?.addEventListener("change", () => {
-        btn.disabled = !check.checked;
-    }, { once:false });
 }
 
-function cerrarDeleteModal(){
+function cerrarDeleteModal(keepId = false){
     document.getElementById("deleteModal")?.classList.remove("show");
-    deleteChatId = null;
+    if(!keepId) deleteChatId = null;   // ✅ solo se borra si fue cancelar/cerrar
 }
 
 async function confirmarEliminarChat(){
-    if(!deleteChatId) return;
-    await fetch(`/delete_chat/${deleteChatId}`, { method:'POST' });
-    cerrarDeleteModal();
-    showToast("✅ Chat eliminado");
-    setTimeout(()=> window.location.href = '/', 700);
+    if(!deleteChatId || isDeleting) return;
+
+    isDeleting = true;
+
+    const id = deleteChatId; // ✅ guardar el id real ANTES de cerrar
+
+    const btn = document.getElementById("btnDeleteConfirm");
+    if(btn){
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Eliminando.`;
+    }
+
+    // ✅ cerrar modal pero conservando el id
+    cerrarDeleteModal(true);
+
+    // ✅ UI instantánea: quitar de la lista
+    const item = document.getElementById(`chat-item-${id}`);
+    if(item) item.remove();
+
+    // ✅ Si estoy dentro del chat eliminado, limpio la vista sin recargar
+    const currentIdEl = document.getElementById("current-chat-id");
+    const activeChatId = (currentIdEl?.value || "").trim();
+
+    const wasActive = activeChatId === String(id);
+
+    if(wasActive){
+        currentIdEl.value = "";
+        const chatBox = document.getElementById("chat-box");
+        if(chatBox){
+            chatBox.innerHTML = `
+              <div class="empty-state">
+                <div class="logo-big"><i class="fas fa-brain"></i></div>
+                <h2>¡Hola!</h2>
+                <p>¿Qué quieres aprender hoy?</p>
+                <div class="suggestion-chips">
+                  <button onclick="usarPrompt('Ayúdame con Matemáticas')">📐 Matemáticas</button>
+                  <button onclick="usarPrompt('Explícame un tema de Historia')">🏛️ Historia</button>
+                  <button onclick="usarPrompt('Ayúdame a programar en Python')">💻 Programación</button>
+                </div>
+              </div>
+            `;
+        }
+        window.history.pushState({}, "", "/");
+    }
+
+    // ✅ Petición real al servidor con timeout
+    try{
+        const controller = new AbortController();
+        const t = setTimeout(()=> controller.abort(), 8000);
+
+        const res = await fetch(`/delete_chat/${id}`, { // ✅ usar id guardado
+            method: "POST",
+            signal: controller.signal
+        });
+
+        clearTimeout(t);
+
+        if(!res.ok){
+            showToast("❌ No se pudo eliminar. Intenta otra vez.");
+        } else {
+            showToast("✅ Chat eliminado");
+        }
+
+    } catch(err){
+        showToast("⚠️ Se tardó demasiado. Revisa tu conexión.");
+    } finally {
+        isDeleting = false;
+        deleteChatId = null; // ✅ aquí sí lo limpiamos
+        if(btn && btn.dataset.originalText){
+            btn.innerHTML = btn.dataset.originalText;
+        }
+    }
 }
 
-// ✅ Reemplaza tu borrarChat para abrir el modal
 async function borrarChat(e, id) {
     e.preventDefault();
     e.stopPropagation();
@@ -248,6 +308,15 @@ document.addEventListener("DOMContentLoaded", ()=>{
     document.getElementById('user-input')?.addEventListener('keypress', e=>{
         if(e.key === 'Enter') enviarMensaje();
     });
+
+    // ✅ Activar botón de eliminar cuando el checkbox está marcado
+    const check = document.getElementById("deleteCheck");
+    const btn = document.getElementById("btnDeleteConfirm");
+    if(check && btn){
+        check.addEventListener("change", ()=>{
+            btn.disabled = !check.checked;
+        });
+    }
 });
 
 window.addEventListener('pageshow', () => {
