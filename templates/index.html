@@ -28,7 +28,7 @@
                 </button>
             </div>
 
-            <a href="{{ url_for('new_chat') }}" class="new-chat-btn">
+            <a href="#" class="new-chat-btn" onclick="nuevaConversacionInstant(); return false;">
                 <i class="fas fa-plus"></i> Nueva Conversación
             </a>
 
@@ -55,7 +55,7 @@
             </div>
         </aside>
 
-        <main class="chat-area">
+        <main class="chat-area" data-user-name="{{ name.split()[0] }}">
             <header class="chat-header">
                 <button id="menu-btn" onclick="toggleSidebar()">
                     <i class="fas fa-bars"></i>

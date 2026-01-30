@@ -442,3 +442,20 @@ body {
     padding: 14px; 
   }
 }
+
+/* ✅ FIX: evita overflow cuando sidebar está abierto (PC) */
+.app-container { 
+  min-width: 0; 
+}
+
+.chat-area { 
+  min-width: 0; 
+}
+
+#chat-box { 
+  min-width: 0; 
+}
+
+.message, .msg-content, .rendered-text {
+  max-width: 100%;
+}

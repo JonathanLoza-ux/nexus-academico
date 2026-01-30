@@ -1,345 +1,522 @@
-/* script.js - Final */
+/* script.js - Final (Fix MathJax + No reload + Layout estable) */
 
 // ✅ Variables globales para eliminación
 let deleteChatId = null;
 let isDeleting = false;
 
+// ✅ Configurar marked (tablas, saltos de línea, etc.)
+if (window.marked) {
+  marked.setOptions({
+    gfm: true,
+    breaks: true
+  });
+}
+
+/* ---------------------------
+   ✅ Helpers seguros
+--------------------------- */
+
+// ✅ MathJax puede no estar listo por "async"
+function safeTypeset(el) {
+  try {
+    if (window.MathJax && typeof window.MathJax.typesetPromise === "function") {
+      return window.MathJax.typesetPromise([el]);
+    }
+  } catch (e) {}
+  return Promise.resolve();
+}
+
+// ✅ Scroll abajo
+function scrollChatBottom() {
+  const box = document.getElementById("chat-box");
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
+// ✅ Asegurar listener del checkbox (se pierde a veces con pageshow/bfcache)
+function wireDeleteCheckbox() {
+  const check = document.getElementById("deleteCheck");
+  const btn = document.getElementById("btnDeleteConfirm");
+  if (check && btn) {
+    btn.disabled = !check.checked;
+    check.onchange = () => {
+      btn.disabled = !check.checked;
+    };
+  }
+}
+
+/* ---------------------------
+   UI: modales / dropdown / tema / sidebar
+--------------------------- */
+
 function toggleModal(modalId) { document.getElementById(modalId).classList.toggle('show'); }
 function openModal(id){ document.getElementById(id)?.classList.add('show'); }
 function closeModal(id){ document.getElementById(id)?.classList.remove('show'); }
+
 function toggleDropdown() { document.getElementById("myDropdown")?.classList.toggle('show'); }
+
 function updateThemeIcon() {
-    const icon = document.querySelector('.theme-btn-header i');
-    if (!icon) return;
-    if (document.body.classList.contains('light-mode')) {
-        icon.classList.remove('fa-moon');
-        icon.classList.add('fa-sun');
-    } else {
-        icon.classList.remove('fa-sun');
-        icon.classList.add('fa-moon');
-    }
+  const icon = document.querySelector('.theme-btn-header i');
+  if (!icon) return;
+  if (document.body.classList.contains('light-mode')) {
+    icon.classList.remove('fa-moon');
+    icon.classList.add('fa-sun');
+  } else {
+    icon.classList.remove('fa-sun');
+    icon.classList.add('fa-moon');
+  }
 }
 function applyTheme(theme) {
-    document.body.classList.toggle('light-mode', theme === 'light');
-    updateThemeIcon();
-    localStorage.setItem('theme', theme);
+  document.body.classList.toggle('light-mode', theme === 'light');
+  updateThemeIcon();
+  try { localStorage.setItem('theme', theme); } catch(e) {}
 }
 function toggleTheme() {
-    const isLight = document.body.classList.contains('light-mode');
-    applyTheme(isLight ? 'dark' : 'light');
+  const isLight = document.body.classList.contains('light-mode');
+  applyTheme(isLight ? 'dark' : 'light');
 }
+
 function toggleSidebar() {
-    const sb = document.querySelector('.sidebar');
-    const ov = document.getElementById('overlay');
-    if (window.innerWidth <= 768) {
-        sb.classList.toggle('active');
-        if(ov) ov.classList.toggle('active');
-    } else { sb.classList.toggle('closed'); }
+  const sb = document.querySelector('.sidebar');
+  const ov = document.getElementById('overlay');
+  if (window.innerWidth <= 768) {
+    sb.classList.toggle('active');
+    if (ov) ov.classList.toggle('active');
+  } else {
+    sb.classList.toggle('closed');
+  }
 }
 
+// ✅ cerrar dropdown si clic afuera
 document.addEventListener("click", (e) => {
-    const subjectsModal = document.getElementById('subjectsModal');
-    // ✅ cerrar modal si toca el fondo oscuro
-    if (subjectsModal && e.target === subjectsModal) {
-        toggleModal('subjectsModal');
-    }
+  const subjectsModal = document.getElementById('subjectsModal');
+  if (subjectsModal && e.target === subjectsModal) toggleModal('subjectsModal');
 
-    // ✅ dropdown estable (no cerrar si tocás dentro del dropdown)
-    const dropdown = document.getElementById("myDropdown");
-    const profileArea = document.querySelector('.profile-dropdown');
+  const dropdown = document.getElementById("myDropdown");
+  const profileArea = document.querySelector('.profile-dropdown');
+  if (!dropdown || !profileArea) return;
 
-    if (!dropdown || !profileArea) return;
+  const clickedInsideProfile = profileArea.contains(e.target);
+  const clickedInsideDropdown = dropdown.contains(e.target);
 
-    const clickedInsideProfile = profileArea.contains(e.target);
-    const clickedInsideDropdown = dropdown.contains(e.target);
-
-    if (!clickedInsideProfile && !clickedInsideDropdown) {
-        dropdown.classList.remove("show");
-    }
+  if (!clickedInsideProfile && !clickedInsideDropdown) {
+    dropdown.classList.remove("show");
+  }
 }, { passive: true });
 
+/* ---------------------------
+   ✅ Nueva conversación INSTANTÁNEA (sin recargar)
+   - Limpia UI
+   - Deja chat_id vacío
+   - Se crea en backend cuando envías el primer mensaje
+--------------------------- */
+
+function nuevaConversacionInstant() {
+  // cerrar sidebar si móvil
+  if (window.innerWidth <= 768) {
+    const sb = document.querySelector('.sidebar');
+    const ov = document.getElementById('overlay');
+    sb?.classList.remove('active');
+    ov?.classList.remove('active');
+  }
+
+  // ✅ leer nombre desde el HTML
+  const firstName = document.querySelector(".chat-area")?.dataset.userName || "";
+
+  // limpiar chat actual
+  const currentIdEl = document.getElementById("current-chat-id");
+  if (currentIdEl) currentIdEl.value = "";
+
+  const chatBox = document.getElementById("chat-box");
+  if (chatBox) {
+    chatBox.innerHTML = `
+      <div class="empty-state">
+        <div class="logo-big"><i class="fas fa-brain"></i></div>
+        <h2>¡Hola${firstName ? `, ${escapeHtml(firstName)}` : ""}!</h2>
+        <p>¿Qué quieres aprender hoy?</p>
+        <div class="suggestion-chips">
+          <button onclick="usarPrompt('Ayúdame con Matemáticas')">📐 Matemáticas</button>
+          <button onclick="usarPrompt('Explícame un tema de Historia')">🏛️ Historia</button>
+          <button onclick="usarPrompt('Ayúdame a programar en Python')">💻 Programación</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // quitar activos del historial
+  document.querySelectorAll(".chat-item.active").forEach(a => a.classList.remove("active"));
+
+  // actualizar URL sin recargar
+  window.history.pushState({}, "", "/");
+
+  document.getElementById("user-input")?.focus();
+}
+
+/* ---------------------------
+   Prompts / envío
+--------------------------- */
+
 function seleccionarMateria(materia) {
-    toggleModal('subjectsModal');
-    usarPrompt("Quiero aprender sobre " + materia + ". ¿Por dónde empezamos?");
+  toggleModal('subjectsModal');
+  usarPrompt("Quiero aprender sobre " + materia + ". ¿Por dónde empezamos?");
 }
 
 function usarPrompt(texto) {
-    const inp = document.getElementById('user-input');
-    inp.value = texto;
-    if(window.innerWidth<=768) toggleSidebar();
-    inp.focus();
-    enviarMensaje();
+  const inp = document.getElementById('user-input');
+  inp.value = texto;
+  if (window.innerWidth <= 768) toggleSidebar();
+  inp.focus();
+  enviarMensaje();
 }
 
 async function enviarMensaje() {
-    const inp = document.getElementById('user-input');
-    const imgInp = document.getElementById('image-input');
-    const msg = inp.value.trim();
-    const chatBox = document.getElementById('chat-box');
-    const loader = document.getElementById('loading-indicator');
-    const chatId = document.getElementById('current-chat-id').value;
+  const inp = document.getElementById('user-input');
+  const imgInp = document.getElementById('image-input');
+  const msg = inp.value.trim();
+  const chatBox = document.getElementById('chat-box');
+  const loader = document.getElementById('loading-indicator');
+  const currentIdEl = document.getElementById('current-chat-id');
+  const chatId = (currentIdEl?.value || "").trim();
 
-    const hasImg = imgInp.files && imgInp.files.length > 0;
-    const file = hasImg ? imgInp.files[0] : null; // ✅ guardar archivo ANTES de limpiar
+  const hasImg = imgInp.files && imgInp.files.length > 0;
+  const file = hasImg ? imgInp.files[0] : null;
 
-    if (!msg && !file) return;
+  if (!msg && !file) return;
 
-    document.querySelector('.empty-state')?.remove();
+  document.querySelector('.empty-state')?.remove();
 
-    // UI Local
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = e => mostrarMensaje(msg, 'user', e.target.result);
-        reader.readAsDataURL(file);
+  // ✅ Mostrar mensaje del usuario de inmediato (con imagen local)
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = e => mostrarMensaje(msg, 'user', e.target.result);
+    reader.readAsDataURL(file);
+  } else {
+    mostrarMensaje(msg, 'user');
+  }
+
+  const textToSend = inp.value;
+  inp.value = '';
+  scrollChatBottom();
+  loader?.classList.remove('hidden');
+
+  const fd = new FormData();
+  fd.append('message', textToSend);
+  fd.append('chat_id', chatId);
+  if (file) fd.append('image', file);
+
+  if (file) quitarImagen();
+
+  try {
+    const res = await fetch('/chat', { method: 'POST', body: fd });
+    const data = await res.json();
+
+    loader?.classList.add('hidden');
+
+    // ✅ Si backend creó chat nuevo: NO recargar, solo actualizar estado + URL
+    if (data.chat_id && (!chatId || chatId === "None")) {
+      if (currentIdEl) currentIdEl.value = data.chat_id;
+      window.history.pushState({}, "", `/c/${data.chat_id}`);
+
+      // crear item en historial si no existe
+      upsertChatItem(data.chat_id, data.new_title || "Nuevo Chat...", true);
     } else {
-        mostrarMensaje(msg, 'user');
+      // si ya existía, actualizar título si cambió
+      if (data.chat_id && data.new_title) {
+        upsertChatItem(data.chat_id, data.new_title, true);
+      }
     }
 
-    const textToSend = inp.value;
-    inp.value = '';
-    chatBox.scrollTop = chatBox.scrollHeight;
-    loader.classList.remove('hidden');
-
-    const fd = new FormData();
-    fd.append('message', textToSend);
-    fd.append('chat_id', chatId);
-    if (file) fd.append('image', file); // ✅ ahora sí viaja la imagen
-
-    // ✅ ya podemos limpiar preview
-    if (file) quitarImagen();
-
-    try {
-        const res = await fetch('/chat', { method:'POST', body:fd });
-        const data = await res.json();
-
-        loader.classList.add('hidden');
-
-        if(data.chat_id && chatId == '') {
-            window.location.href = `/c/${data.chat_id}`;
-            return;
-        }
-
-        const div = document.createElement('div');
-        div.className = 'message bot-msg';
-        const content = document.createElement('div');
-        content.className = 'msg-content';
-        div.appendChild(content);
-        chatBox.appendChild(div);
-
-        typeWriter(content, data.response);
-
-    } catch (e) {
-        loader.classList.add('hidden');
-        mostrarMensaje("Error de conexión.", 'bot');
-    }
-}
-
-function mostrarMensaje(txt, sender, img=null) {
-    const box = document.getElementById('chat-box');
+    // ✅ Agregar burbuja del bot
     const div = document.createElement('div');
-    div.className = `message ${sender}-msg`;
+    div.className = 'message bot-msg';
     const content = document.createElement('div');
     content.className = 'msg-content';
-
-    if(img) {
-        const i = document.createElement('img');
-        i.src = img;
-        i.className = "chat-image";
-        content.appendChild(i);
-    }
-
-    if(txt) content.textContent = txt;
-
     div.appendChild(content);
-    box.appendChild(div);
+    chatBox.appendChild(div);
 
-    // ✅ IMPORTANTE: bajar scroll después de insertar
-    box.scrollTop = box.scrollHeight;
+    typeWriter(content, data.response);
+
+  } catch (e) {
+    loader?.classList.add('hidden');
+    mostrarMensaje("Error de conexión.", 'bot');
+  }
+}
+
+function mostrarMensaje(txt, sender, img = null) {
+  const box = document.getElementById('chat-box');
+  const div = document.createElement('div');
+  div.className = `message ${sender}-msg`;
+  const content = document.createElement('div');
+  content.className = 'msg-content';
+
+  if (img) {
+    const i = document.createElement('img');
+    i.src = img;
+    i.className = "chat-image";
+    content.appendChild(i);
+  }
+
+  if (txt) content.appendChild(document.createTextNode(txt));
+
+  div.appendChild(content);
+  box.appendChild(div);
+  scrollChatBottom();
 }
 
 function quitarImagen() {
-    document.getElementById('image-input').value = '';
-    document.getElementById('image-preview-container').classList.add('hidden');
+  const imgInput = document.getElementById('image-input');
+  if (imgInput) imgInput.value = '';
+  document.getElementById('image-preview-container')?.classList.add('hidden');
 }
 
 function mostrarVistaPrevia() {
-    const inp = document.getElementById('image-input');
-    if(inp.files && inp.files[0]) {
-        const reader = new FileReader();
-        reader.onload = e => {
-            document.getElementById('image-preview').src = e.target.result;
-            document.getElementById('image-preview-container').classList.remove('hidden');
-        }
-        reader.readAsDataURL(inp.files[0]);
-    }
+  const inp = document.getElementById('image-input');
+  if (inp.files && inp.files[0]) {
+    const reader = new FileReader();
+    reader.onload = e => {
+      document.getElementById('image-preview').src = e.target.result;
+      document.getElementById('image-preview-container').classList.remove('hidden');
+    };
+    reader.readAsDataURL(inp.files[0]);
+  }
 }
 
-function abrirDeleteModal(id){
-    deleteChatId = id;
-    const modal = document.getElementById("deleteModal");
-    const check = document.getElementById("deleteCheck");
-    const btn = document.getElementById("btnDeleteConfirm");
+/* ---------------------------
+   ✅ Historial: render Markdown (y no romper por MathJax)
+--------------------------- */
 
-    if(check) check.checked = false;
-    if(btn){
-        btn.disabled = true;
-        btn.dataset.originalText = btn.innerHTML; // guardar texto original
-        btn.innerHTML = "Eliminar";
-    }
+function renderHistoryMessages() {
+  document.querySelectorAll('.history-content').forEach(h => {
+    if (!window.marked) return;
+    const target = h.nextElementSibling; // .rendered-text
+    if (!target) return;
 
-    modal?.classList.add("show");
+    target.innerHTML = marked.parse(h.textContent || "");
+    safeTypeset(target);
+  });
 }
 
-function cerrarDeleteModal(keepId = false){
-    document.getElementById("deleteModal")?.classList.remove("show");
-    if(!keepId) deleteChatId = null;   // ✅ solo se borra si fue cancelar/cerrar
+/* ---------------------------
+   ✅ Typewriter: al final render completo + MathJax seguro
+--------------------------- */
+
+function typeWriter(el, txt, i = 0) {
+  // Si no hay marked, al menos mostrar texto
+  if (!window.marked) {
+    el.textContent = txt;
+    return;
+  }
+
+  // velocidad (ajusta si quieres)
+  const step = 6;
+
+  if (i < txt.length) {
+    // Durante la animación: render parcial (tablas completas salen al final)
+    el.innerHTML = marked.parse(txt.substring(0, i + step));
+    scrollChatBottom();
+    setTimeout(() => typeWriter(el, txt, i + step), 5);
+  } else {
+    // ✅ Render FINAL completo (aquí ya deben salir tablas)
+    el.innerHTML = marked.parse(txt);
+    safeTypeset(el).then(() => scrollChatBottom());
+  }
 }
 
-async function confirmarEliminarChat(){
-    if(!deleteChatId || isDeleting) return;
+/* ---------------------------
+   ✅ Sidebar historial: crear/actualizar item sin recargar
+--------------------------- */
 
-    isDeleting = true;
+function upsertChatItem(chatId, title, setActive = false) {
+  const list = document.querySelector(".conversations-list");
+  if (!list) return;
 
-    const id = deleteChatId; // ✅ guardar el id real ANTES de cerrar
+  // wrapper existente?
+  let wrapper = document.getElementById(`chat-item-${chatId}`);
+  if (!wrapper) {
+    wrapper = document.createElement("div");
+    wrapper.className = "chat-item-wrapper";
+    wrapper.id = `chat-item-${chatId}`;
 
-    const btn = document.getElementById("btnDeleteConfirm");
-    if(btn){
-        btn.disabled = true;
-        btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Eliminando.`;
+    wrapper.innerHTML = `
+      <a href="/c/${chatId}" class="chat-item">
+        <i class="far fa-comment-alt"></i>
+        <span>${escapeHtml(title || "Nuevo Chat...")}</span>
+      </a>
+      <button class="delete-chat-btn" onclick="borrarChat(event, ${chatId})">
+        <i class="fas fa-trash"></i>
+      </button>
+    `;
+
+    // Insertar arriba después del título "HISTORIAL"
+    const sectionTitle = list.querySelector(".section-title");
+    if (sectionTitle && sectionTitle.nextSibling) {
+      list.insertBefore(wrapper, sectionTitle.nextSibling);
+    } else {
+      list.appendChild(wrapper);
     }
+  } else {
+    const span = wrapper.querySelector("span");
+    if (span && title) span.textContent = title;
+  }
 
-    // ✅ cerrar modal pero conservando el id
-    cerrarDeleteModal(true);
+  if (setActive) {
+    document.querySelectorAll(".chat-item.active").forEach(a => a.classList.remove("active"));
+    const a = wrapper.querySelector("a.chat-item");
+    a?.classList.add("active");
+  }
+}
 
-    // ✅ UI instantánea: quitar de la lista
-    const item = document.getElementById(`chat-item-${id}`);
-    if(item) item.remove();
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, s => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+  }[s]));
+}
 
-    // ✅ Si estoy dentro del chat eliminado, limpio la vista sin recargar
-    const currentIdEl = document.getElementById("current-chat-id");
-    const activeChatId = (currentIdEl?.value || "").trim();
+/* ---------------------------
+   ✅ Delete chat (más estable)
+--------------------------- */
 
-    const wasActive = activeChatId === String(id);
+function abrirDeleteModal(id) {
+  deleteChatId = id;
+  isDeleting = false; // ✅ por si quedó trabado
 
-    if(wasActive){
-        currentIdEl.value = "";
-        const chatBox = document.getElementById("chat-box");
-        if(chatBox){
-            chatBox.innerHTML = `
-              <div class="empty-state">
-                <div class="logo-big"><i class="fas fa-brain"></i></div>
-                <h2>¡Hola!</h2>
-                <p>¿Qué quieres aprender hoy?</p>
-                <div class="suggestion-chips">
-                  <button onclick="usarPrompt('Ayúdame con Matemáticas')">📐 Matemáticas</button>
-                  <button onclick="usarPrompt('Explícame un tema de Historia')">🏛️ Historia</button>
-                  <button onclick="usarPrompt('Ayúdame a programar en Python')">💻 Programación</button>
-                </div>
-              </div>
-            `;
-        }
-        window.history.pushState({}, "", "/");
-    }
+  const modal = document.getElementById("deleteModal");
+  const check = document.getElementById("deleteCheck");
+  const btn = document.getElementById("btnDeleteConfirm");
 
-    // ✅ Petición real al servidor con timeout
-    try{
-        const controller = new AbortController();
-        const t = setTimeout(()=> controller.abort(), 8000);
+  if (check) check.checked = false;
+  if (btn) {
+    btn.disabled = true;
+    btn.dataset.originalText = btn.innerHTML;
+    btn.innerHTML = "Eliminar";
+  }
 
-        const res = await fetch(`/delete_chat/${id}`, { // ✅ usar id guardado
-            method: "POST",
-            signal: controller.signal
-        });
+  modal?.classList.add("show");
+  wireDeleteCheckbox();
+}
 
-        clearTimeout(t);
+function cerrarDeleteModal(keepId = false) {
+  document.getElementById("deleteModal")?.classList.remove("show");
+  if (!keepId) deleteChatId = null;
+}
 
-        if(!res.ok){
-            showToast("❌ No se pudo eliminar. Intenta otra vez.");
-        } else {
-            showToast("✅ Chat eliminado");
-        }
+async function confirmarEliminarChat() {
+  if (!deleteChatId || isDeleting) return;
+  isDeleting = true;
 
-    } catch(err){
-        showToast("⚠️ Se tardó demasiado. Revisa tu conexión.");
-    } finally {
-        isDeleting = false;
-        deleteChatId = null; // ✅ aquí sí lo limpiamos
-        if(btn && btn.dataset.originalText){
-            btn.innerHTML = btn.dataset.originalText;
-        }
-    }
+  const id = deleteChatId;
+
+  const btn = document.getElementById("btnDeleteConfirm");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Eliminando...`;
+  }
+
+  cerrarDeleteModal(true);
+
+  // quitar de la lista
+  document.getElementById(`chat-item-${id}`)?.remove();
+
+  // si estoy dentro del chat eliminado, limpiar vista
+  const currentIdEl = document.getElementById("current-chat-id");
+  const activeChatId = (currentIdEl?.value || "").trim();
+  const wasActive = activeChatId === String(id);
+
+  if (wasActive) {
+    currentIdEl.value = "";
+    nuevaConversacionInstant();
+  }
+
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 8000);
+
+    const res = await fetch(`/delete_chat/${id}`, {
+      method: "POST",
+      signal: controller.signal
+    });
+
+    clearTimeout(t);
+
+    if (!res.ok) showToast("❌ No se pudo eliminar. Intenta otra vez.");
+    else showToast("✅ Chat eliminado");
+
+  } catch (err) {
+    showToast("⚠️ Se tardó demasiado. Revisa tu conexión.");
+  } finally {
+    isDeleting = false;
+    deleteChatId = null;
+    if (btn && btn.dataset.originalText) btn.innerHTML = btn.dataset.originalText;
+  }
 }
 
 async function borrarChat(e, id) {
-    e.preventDefault();
-    e.stopPropagation();
-    abrirDeleteModal(id);
+  e.preventDefault();
+  e.stopPropagation();
+  abrirDeleteModal(id);
 }
 
-// ✅ Cerrar modal si das click afuera
+// cerrar modal si clic afuera
 window.addEventListener("click", (e) => {
-    if(e.target === document.getElementById("deleteModal")) cerrarDeleteModal();
+  if (e.target === document.getElementById("deleteModal")) cerrarDeleteModal();
 });
 
-function typeWriter(el, txt, i=0) {
-    if(i < txt.length) {
-        el.innerHTML = marked.parse(txt.substring(0, i+5));
-        document.getElementById('chat-box').scrollTop = document.getElementById('chat-box').scrollHeight;
-        setTimeout(()=>typeWriter(el, txt, i+5), 1);
-    } else {
-        el.innerHTML = marked.parse(txt);
-        if(window.MathJax) MathJax.typesetPromise([el]);
-    }
+/* ---------------------------
+   Toast
+--------------------------- */
+
+function showToast(text, ms = 1800) {
+  const t = document.getElementById("toast");
+  const tt = document.getElementById("toastText");
+  if (!t || !tt) return;
+  tt.textContent = text;
+  t.classList.remove("hidden");
+  setTimeout(() => t.classList.add("hidden"), ms);
 }
 
-function renderHistoryMessages() {
-    document.querySelectorAll('.history-content').forEach(h=>{
-        if (!window.marked) return;
-        h.nextElementSibling.innerHTML = marked.parse(h.textContent);
-        if(window.MathJax) MathJax.typesetPromise([h.nextElementSibling]);
+/* ---------------------------
+   Init
+--------------------------- */
+
+document.addEventListener("DOMContentLoaded", () => {
+  // tema
+  let savedTheme = null;
+  try { savedTheme = localStorage.getItem('theme'); } catch(e) {}
+  if (savedTheme) applyTheme(savedTheme);
+  else updateThemeIcon();
+
+  // render historial
+  renderHistoryMessages();
+  scrollChatBottom();
+
+  // Enter = enviar
+  document.getElementById('user-input')?.addEventListener('keypress', e => {
+    if (e.key === 'Enter') enviarMensaje();
+  });
+
+  wireDeleteCheckbox();
+
+  // ✅ Cuando MathJax termine de cargar, re-renderiza (así nunca ocupas recargar)
+  const mj = document.getElementById("MathJax-script");
+  if (mj) {
+    mj.addEventListener("load", () => {
+      renderHistoryMessages();
+      scrollChatBottom();
     });
-}
-
-document.addEventListener("DOMContentLoaded", ()=>{
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme) applyTheme(savedTheme);
-    else updateThemeIcon();
-
-    renderHistoryMessages();
-    const box = document.getElementById('chat-box');
-    if(box) box.scrollTop = box.scrollHeight;
-    
-    document.getElementById('user-input')?.addEventListener('keypress', e=>{
-        if(e.key === 'Enter') enviarMensaje();
-    });
-
-    // ✅ Activar botón de eliminar cuando el checkbox está marcado
-    const check = document.getElementById("deleteCheck");
-    const btn = document.getElementById("btnDeleteConfirm");
-    if(check && btn){
-        check.addEventListener("change", ()=>{
-            btn.disabled = !check.checked;
-        });
-    }
+  }
 });
 
+// ✅ pageshow (bfcache)
 window.addEventListener('pageshow', () => {
-    renderHistoryMessages();
+  renderHistoryMessages();
+  wireDeleteCheckbox();
+  scrollChatBottom();
 });
 
-function showToast(text, ms=1800){
-    const t = document.getElementById("toast");
-    const tt = document.getElementById("toastText");
-    if(!t || !tt) return;
-    tt.textContent = text;
-    t.classList.remove("hidden");
-    setTimeout(()=> t.classList.add("hidden"), ms);
-}
-
-// ✅ Cerrar con tecla ESC
+// ✅ ESC
 document.addEventListener("keydown", (e) => {
-  if(e.key === "Escape"){
+  if (e.key === "Escape") {
     document.getElementById("myDropdown")?.classList.remove("show");
     closeModal("subjectsModal");
+    cerrarDeleteModal();
   }
 });
