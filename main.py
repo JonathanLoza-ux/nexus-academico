@@ -10,9 +10,16 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from io import BytesIO
+import cloudinary
+import cloudinary.uploader
 
 # 1. CARGA DE CLAVES
 load_dotenv()
+
+CLOUDINARY_URL = os.getenv("CLOUDINARY_URL")
+if CLOUDINARY_URL:
+    cloudinary.config(secure=True)
 
 claves_string = os.getenv("GEMINI_KEYS")
 if not claves_string:
@@ -206,7 +213,7 @@ def delete_chat(chat_id):
 def chat():
     global chat_session
     configurar_gemini_random()
-    
+
     mensaje_usuario = request.form.get('message', '')
     chat_id = request.form.get('chat_id')
     imagen_archivo = request.files.get('image')
@@ -225,35 +232,59 @@ def chat():
 
     try:
         image_url = None
-        image_path = None
-        if imagen_archivo:
-            filename = secure_filename(imagen_archivo.filename or "")
-            ext = os.path.splitext(filename)[1].lower()
-            if ext not in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
-                ext = '.png'
-            unique_name = f"{current_user.id}_{chat_id}_{int(datetime.utcnow().timestamp())}_{random.randint(1000,9999)}{ext}"
-            image_path = os.path.join(UPLOAD_DIR, unique_name)
-            imagen_archivo.save(image_path)
-            image_url = f"/static/uploads/{unique_name}"
+        img_pil = None
+        img_bytes = None
 
-        # Guardar mensaje usuario (con imagen si aplica)
+        # ✅ Si hay imagen, la procesamos
+        if imagen_archivo:
+            img_bytes = imagen_archivo.read()
+            imagen_archivo.stream.seek(0)
+
+            # Crear PIL para Gemini
+            img_pil = Image.open(BytesIO(img_bytes))
+
+            # ✅ Subir a Cloudinary si está configurado
+            if CLOUDINARY_URL:
+                up = cloudinary.uploader.upload(
+                    BytesIO(img_bytes),
+                    folder=f"nexus/{current_user.id}/{chat_id}",
+                    resource_type="image"
+                )
+                image_url = up.get("secure_url")
+            else:
+                # Fallback: guardar local
+                filename = secure_filename(imagen_archivo.filename or "")
+                ext = os.path.splitext(filename)[1].lower()
+                if ext not in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
+                    ext = '.png'
+                unique_name = f"{current_user.id}_{chat_id}_{int(datetime.utcnow().timestamp())}_{random.randint(1000,9999)}{ext}"
+                image_path = os.path.join(UPLOAD_DIR, unique_name)
+                with open(image_path, "wb") as f:
+                    f.write(img_bytes)
+                image_url = f"/static/uploads/{unique_name}"
+
+        # ✅ Guardar mensaje del usuario (con imagen si aplica)
         if image_url:
             img_md = f"![Imagen enviada]({image_url})"
             contenido_msg = f"{img_md}\n\n{mensaje_usuario}" if mensaje_usuario else img_md
         else:
             contenido_msg = mensaje_usuario
 
-        msg_db = Message(content=contenido_msg if contenido_msg else "[Imagen enviada]", sender='user', conversation_id=chat_id)
-        if image_url: msg_db.has_image = True
+        msg_db = Message(
+            content=contenido_msg if contenido_msg else "[Imagen enviada]",
+            sender='user',
+            conversation_id=chat_id
+        )
+        if image_url:
+            msg_db.has_image = True
+
         db.session.add(msg_db)
         db.session.commit()
 
-        # PREPARAR DATOS PARA GEMINI (Corrección de Imagen)
+        # ✅ Preparar datos para Gemini
         contenido_a_enviar = []
-        if imagen_archivo:
-            img = Image.open(image_path) if image_path else Image.open(imagen_archivo)
-            contenido_a_enviar.append(img)
-            # Si hay imagen pero no texto, añadimos un prompt por defecto
+        if img_pil:
+            contenido_a_enviar.append(img_pil)
             texto_prompt = mensaje_usuario if mensaje_usuario else "Analiza esta imagen y explica qué ves."
             contenido_a_enviar.append(texto_prompt)
         else:
@@ -262,25 +293,25 @@ def chat():
         response = chat_session.send_message(contenido_a_enviar)
         texto_limpio = response.text.replace(r'\hline', '')
 
-        # Actualizar título si es nuevo
+        # ✅ Actualizar título si es nuevo
         convo = Conversation.query.get(chat_id)
         new_title = None
-        if convo.title == "Nuevo Chat":
-             titulo_base = mensaje_usuario if mensaje_usuario else "Imagen Analizada"
-             convo.title = " ".join(titulo_base.split()[:4]) + "..."
-             db.session.commit()
-             new_title = convo.title
+        if convo and convo.title == "Nuevo Chat":
+            titulo_base = mensaje_usuario if mensaje_usuario else "Imagen Analizada"
+            convo.title = " ".join(titulo_base.split()[:4]) + "..."
+            db.session.commit()
+            new_title = convo.title
 
-        # Guardar respuesta bot
+        # ✅ Guardar respuesta del bot
         bot_msg_db = Message(content=texto_limpio, sender='bot', conversation_id=chat_id)
         db.session.add(bot_msg_db)
         db.session.commit()
-        
+
         return jsonify({'response': texto_limpio, 'chat_id': chat_id, 'new_title': new_title})
-        
+
     except Exception as e:
         chat_session = model.start_chat(history=[])
-        print(f"❌ ERROR: {e}") 
+        print(f"❌ ERROR: {e}")
         return jsonify({'response': "Tuve un problema técnico procesando eso. Intenta de nuevo."})
 
 if __name__ == '__main__':
