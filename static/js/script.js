@@ -140,17 +140,21 @@ function mostrarMensaje(txt, sender, img=null) {
     div.className = `message ${sender}-msg`;
     const content = document.createElement('div');
     content.className = 'msg-content';
-    
+
     if(img) {
         const i = document.createElement('img');
         i.src = img;
         i.className = "chat-image";
         content.appendChild(i);
     }
+
     if(txt) content.textContent = txt;
-    
+
     div.appendChild(content);
     box.appendChild(div);
+
+    // ✅ IMPORTANTE: bajar scroll después de insertar
+    box.scrollTop = box.scrollHeight;
 }
 
 function quitarImagen() {
