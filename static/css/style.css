@@ -459,3 +459,53 @@ body {
 .message, .msg-content, .rendered-text {
   max-width: 100%;
 }
+
+.link-soft{
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+.link-soft:hover{
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.forgot-center{
+  text-align: center;
+  margin-top: 6px;
+}
+
+.support-btn{
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  text-decoration: none;
+  font-weight: 800;
+  border: 1px solid rgba(37,211,102,0.35);
+  background: rgba(37,211,102,0.12);
+  color: #bbf7d0;
+  transition: 0.15s ease;
+}
+.support-btn:hover{
+  transform: translateY(-1px);
+  border-color: rgba(37,211,102,0.7);
+  background: rgba(37,211,102,0.18);
+}
+.support-btn i{
+  color: #25D366;
+  font-size: 1.2rem;
+}
+
+/* ✅ Fade out para alertas */
+.alert.fade-out {
+  animation: fadeOut 1.2s ease forwards;
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-6px); }
+}
