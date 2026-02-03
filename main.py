@@ -22,13 +22,18 @@ import cloudinary.uploader
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from flask_mail import Mail, Message as MailMessage
 
-# 1. CARGA DE CLAVES
+
+# =========================================================
+# 1) CARGA DE VARIABLES DE ENTORNO (.env)
+# =========================================================
 load_dotenv()
 
+# Cloudinary (para imágenes)
 CLOUDINARY_URL = os.getenv("CLOUDINARY_URL")
 if CLOUDINARY_URL:
     cloudinary.config(cloudinary_url=CLOUDINARY_URL, secure=True)
 
+# Gemini Keys (varias claves separadas por coma)
 claves_string = os.getenv("GEMINI_KEYS")
 if not claves_string:
     print("⚠️ ADVERTENCIA: No se encontró 'GEMINI_KEYS' en el .env.")
@@ -36,29 +41,44 @@ if not claves_string:
 else:
     LISTA_DE_CLAVES = [key.strip() for key in claves_string.split(',') if key.strip()]
 
+
 def configurar_gemini_random():
+    """Elige una clave random para Gemini (útil si tenés varias)."""
     if LISTA_DE_CLAVES:
         clave_elegida = random.choice(LISTA_DE_CLAVES)
         genai.configure(api_key=clave_elegida)
 
+
 configurar_gemini_random()
 
-# 2. CONFIGURACIÓN APP
-app = Flask(__name__)
-app.secret_key = 'clave_secreta_super_segura'
 
-# ✅ Render / URLs externas
+# =========================================================
+# 2) CONFIGURACIÓN DE LA APP
+# =========================================================
+app = Flask(__name__)
+app.secret_key = 'clave_secreta_super_segura'  # ⚠️ en producción: usar variable de entorno
+
+# ✅ Para que url_for(..., _external=True) genere bien enlaces en producción (Render/otro)
 if os.getenv("SERVER_NAME"):
     app.config["SERVER_NAME"] = os.getenv("SERVER_NAME").strip()
 
-# ✅ Reset token
+# ✅ Serializador para tokens de reset
 serializer = URLSafeTimedSerializer(app.secret_key)
 RESET_TOKEN_MAX_AGE = 20 * 60  # 20 minutos
 
-# ✅ Modo reset: dev o smtp
+# ✅ Modo reset:
+# - dev  -> imprime link en consola
+# - smtp -> envía correo real por SMTP (Brevo / Gmail / etc)
 RESET_MODE = (os.getenv("RESET_MODE") or "dev").strip().lower()
 
-# --- CONFIG SMTP (Gmail) ---
+from werkzeug.middleware.proxy_fix import ProxyFix
+
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+app.config["PREFERRED_URL_SCHEME"] = "https"
+
+# =========================================================
+# 3) CONFIG SMTP (BREVO / GMAIL / CUALQUIERA)
+# =========================================================
 MAIL_SERVER = (os.getenv("MAIL_SERVER") or "").strip()
 MAIL_PORT = int((os.getenv("MAIL_PORT") or "587").strip())
 MAIL_USE_TLS = (os.getenv("MAIL_USE_TLS") or "1").strip() == "1"
@@ -73,16 +93,16 @@ app.config["MAIL_USERNAME"] = MAIL_USERNAME
 app.config["MAIL_PASSWORD"] = MAIL_PASSWORD
 app.config["MAIL_DEFAULT_SENDER"] = MAIL_DEFAULT_SENDER
 
-# ✅ Timeout SMTP (evita cuelgues en Render)
+# ✅ Timeout para evitar cuelgues en servidor
 app.config["MAIL_TIMEOUT"] = int((os.getenv("MAIL_TIMEOUT") or "10").strip())
 
-# ✅ FAIL-SAFE: si está en smtp pero falta config, forzar dev
+# ✅ FAIL-SAFE: si dicen smtp pero falta config, fuerza dev para que no intente localhost
 if RESET_MODE == "smtp":
     if not MAIL_SERVER or not MAIL_USERNAME or not MAIL_PASSWORD:
-        print("⚠️ SMTP incompleto en entorno. Forzando RESET_MODE=dev para evitar localhost.")
+        print("⚠️ SMTP incompleto. Forzando RESET_MODE=dev para evitar errores.")
         RESET_MODE = "dev"
 
-# ✅ DEBUG RENDER (NO muestra password)
+# ✅ DEBUG (NO imprime password)
 print("=== SMTP DEBUG ===")
 print("MAIL_SERVER:", repr(app.config.get("MAIL_SERVER")))
 print("MAIL_PORT:", repr(app.config.get("MAIL_PORT")))
@@ -94,7 +114,10 @@ print("==================")
 
 mail = Mail(app)
 
-# --- CONEXIÓN A CLEVER CLOUD (NUBE) ---
+
+# =========================================================
+# 4) BASE DE DATOS (Clever Cloud MySQL)
+# =========================================================
 uri_db = 'mysql+pymysql://udmqmivnwwrjopej:jPWHA7KXpYOqG8lgg3bX@bstpf7hytdgr1gantoui-mysql.services.clever-cloud.com:3306/bstpf7hytdgr1gantoui'
 app.config['SQLALCHEMY_DATABASE_URI'] = uri_db
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -102,19 +125,29 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_recycle': 280}
 
 db = SQLAlchemy(app)
 
+
+# =========================================================
+# 5) LOGIN (Flask-Login)
+# =========================================================
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login_page'
 login_manager.login_message = None
 
-# --- VALIDACIONES Y SUBIDAS ---
+
+# =========================================================
+# 6) VALIDACIONES Y SUBIDAS
+# =========================================================
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_RE = re.compile(r"^(?=.*[A-Za-z])(?=.*[^A-Za-z0-9]).{6,}$")
 
 UPLOAD_DIR = os.path.join(app.root_path, 'static', 'uploads')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# 3. MODELOS
+
+# =========================================================
+# 7) MODELOS
+# =========================================================
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(100), unique=True, nullable=False)
@@ -122,12 +155,14 @@ class User(UserMixin, db.Model):
     name = db.Column(db.String(100), nullable=False)
     conversations = db.relationship('Conversation', backref='owner', lazy=True)
 
+
 class Conversation(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(100), default="Nuevo Chat")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     messages = db.relationship('Message', backref='conversation', lazy=True, cascade="all, delete-orphan")
+
 
 class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -137,21 +172,30 @@ class Message(db.Model):
     has_image = db.Column(db.Boolean, default=False)
     conversation_id = db.Column(db.Integer, db.ForeignKey('conversation.id'), nullable=False)
 
+
 class ResetRequest(db.Model):
+    """
+    Controla intentos y cooldown para evitar spam de correos.
+    """
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(100), index=True, nullable=False)
     last_sent_at = db.Column(db.DateTime, nullable=True)
     attempts = db.Column(db.Integer, default=0)
     first_attempt_at = db.Column(db.DateTime, nullable=True)
 
+
 with app.app_context():
     db.create_all()
+
 
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# 4. CONFIGURACIÓN IA
+
+# =========================================================
+# 8) CONFIG IA (Gemini)
+# =========================================================
 instruccion_sistema = """
 Eres Nexus, un asistente académico avanzado.
 REGLAS:
@@ -160,6 +204,7 @@ REGLAS:
 3. Sé amable y directo.
 """
 configuracion = {"temperature": 0.7}
+
 model = genai.GenerativeModel(
     model_name='gemini-flash-latest',
     generation_config=configuracion,
@@ -167,35 +212,185 @@ model = genai.GenerativeModel(
 )
 chat_session = model.start_chat(history=[])
 
+
+# =========================================================
+# 9) RESET LIMITS (anti-spam)
+# =========================================================
 RESET_COOLDOWN_SECONDS = 60
 RESET_MAX_ATTEMPTS = 3
 RESET_WINDOW_MINUTES = 30  # ventana en la que cuentan los 3 intentos
 
-def send_reset_link(email, name, link):
-    mode = RESET_MODE
 
+# =========================================================
+# 10) HTML del correo (Reset)
+# =========================================================
+def build_reset_email_html(name: str, link: str) -> str:
+    """
+    HTML para el correo de recuperación.
+    Importante: mantenerlo simple y compatible con Gmail/Outlook.
+    """
+    return f"""
+<div style="margin:0; padding:0; background:#0b1220; font-family:Segoe UI, Arial, sans-serif;">
+  <div style="max-width:640px; margin:0 auto; padding:28px 16px;">
+
+    <div style="
+      background:linear-gradient(180deg,#0f172a 0%, #0b1220 100%);
+      border:1px solid #1f2a44;
+      border-radius:18px;
+      overflow:hidden;
+      box-shadow:0 12px 30px rgba(0,0,0,.35);
+    ">
+
+      <div style="padding:22px 20px; text-align:center; border-bottom:1px solid #1f2a44;">
+        <div style="font-size:30px; font-weight:900; letter-spacing:1px; color:#22d3ee;">NEXUS</div>
+        <div style="margin-top:6px; color:#94a3b8; font-size:13px;">Recuperación de contraseña</div>
+
+        <div style="margin-top:14px;">
+          <span style="
+            display:inline-block;
+            padding:9px 14px;
+            border-radius:999px;
+            background:rgba(34,211,238,.08);
+            border:1px solid rgba(34,211,238,.35);
+            color:#cbd5e1;
+            font-size:12px;
+            font-weight:700;
+          ">
+            Enlace válido por <span style="color:#7dd3fc; font-weight:900;">20 minutos</span>
+          </span>
+        </div>
+      </div>
+
+      <div style="padding:22px 20px; color:#e2e8f0;">
+        <p style="margin:0 0 12px 0; font-size:15px;">
+          Hola <b style="color:#ffffff;">{name}</b>,
+        </p>
+
+        <p style="margin:0 0 16px 0; font-size:14px; color:#cbd5e1; line-height:1.65;">
+          Recibimos una solicitud para restablecer tu contraseña. Si fuiste tú, presiona el botón:
+        </p>
+
+        <div style="text-align:center; margin:18px 0 14px 0;">
+          <a href="{link}" style="
+            display:inline-block;
+            padding:13px 18px;
+            border-radius:12px;
+            background:#22d3ee;
+            color:#06212a;
+            text-decoration:none;
+            font-weight:900;
+            font-size:14px;
+            box-shadow:0 10px 22px rgba(34,211,238,.20);
+          ">
+            Restablecer contraseña
+          </a>
+        </div>
+
+        <p style="margin:0; font-size:12.5px; color:#94a3b8; line-height:1.6;">
+          Si tú no hiciste esta solicitud, puedes ignorar este correo.
+        </p>
+
+        <div style="margin-top:18px; padding-top:16px; border-top:1px solid #1f2a44;">
+          <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">
+            Si el botón no funciona, copia y pega este enlace:
+          </div>
+
+          <div style="
+            word-break:break-all;
+            padding:12px 12px;
+            border-radius:12px;
+            background:#07101f;
+            border:1px solid #1f2a44;
+            color:#cbd5e1;
+            font-size:12.5px;
+            line-height:1.6;
+          ">{link}</div>
+        </div>
+
+        <div style="margin-top:18px; padding-top:16px; border-top:1px solid #1f2a44;">
+          <div style="
+            display:inline-block;
+            font-size:11px;
+            letter-spacing:.6px;
+            text-transform:uppercase;
+            color:#94a3b8;
+            background:#07101f;
+            border:1px solid #1f2a44;
+            padding:6px 10px;
+            border-radius:999px;
+          ">
+            Soporte Nexus
+          </div>
+
+          <p style="margin:12px 0 12px 0; font-size:12.5px; color:#94a3b8; line-height:1.6;">
+            Este es un correo automático. Si necesitas ayuda, contáctanos:
+          </p>
+
+          <div style="text-align:center; margin:8px 0 2px 0;">
+            <a href="mailto:jonathandavidloza@gmail.com" style="
+              display:inline-block;
+              margin:6px 6px;
+              padding:10px 14px;
+              border-radius:12px;
+              background:#07101f;
+              border:1px solid #1f2a44;
+              color:#e2e8f0;
+              text-decoration:none;
+              font-weight:800;
+              font-size:13px;
+            ">Escribir a soporte</a>
+
+            <a href="https://wa.me/50364254348?text=Hola%20Nexus%2C%20necesito%20ayuda%20con%20mi%20cuenta." style="
+              display:inline-block;
+              margin:6px 6px;
+              padding:10px 14px;
+              border-radius:12px;
+              background:#22d3ee;
+              border:1px solid rgba(34,211,238,.55);
+              color:#06212a;
+              text-decoration:none;
+              font-weight:900;
+              font-size:13px;
+              box-shadow:0 10px 22px rgba(34,211,238,.18);
+            ">WhatsApp soporte</a>
+          </div>
+
+          <div style="text-align:center; color:#64748b; font-size:12px; margin-top:14px;">
+            © 2026 Nexus • Seguridad de cuenta
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+</div>
+"""
+
+
+# =========================================================
+# 11) ENVÍO DEL CORREO (dev / smtp)
+# =========================================================
+def send_reset_link(email, name, link):
+    mode = (RESET_MODE or "dev").strip().lower()
+
+    # DEV: imprime enlace en consola (para no gastar envíos)
     if mode == "dev":
         print("\n==============================")
         print("🔗 LINK RESET (DEV):", link)
         print("==============================\n")
         return True
 
-    # ✅ doble seguridad: si algo falta, no intentes SMTP
-    if not app.config.get("MAIL_SERVER") or not app.config.get("MAIL_USERNAME") or not app.config.get("MAIL_PASSWORD"):
-        print("⚠️ SMTP incompleto, enviando en modo DEV (no mail.send).")
-        print("🔗 LINK RESET (FALLBACK DEV):", link)
-        return True
-
+    # SMTP: envía correo real (Brevo/Gmail/etc)
     try:
         msg = MailMessage(
             subject="Recuperación de contraseña - Nexus",
             recipients=[email]
         )
 
-        # ✅ Responder = tu correo personal
         msg.reply_to = "jonathandavidloza@gmail.com"
 
-        # Texto plano
+        # Texto plano (por compatibilidad y anti-spam)
         msg.body = f"""Hola {name},
 
 Recibimos una solicitud para restablecer tu contraseña.
@@ -204,101 +399,23 @@ Este enlace es válido por 20 minutos:
 {link}
 
 Si tú no hiciste esta solicitud, ignora este mensaje.
-
----
-Este es un correo automático. Por favor, no respondas a este mensaje.
-Para asistencia, contáctanos:
-Correo: jonathandavidloza@gmail.com
-WhatsApp: https://wa.me/50364254348
 """
 
-        # HTML bonito (badge + chip + glow)
-        msg.html = f"""
-<div style="margin:0; padding:0; font-family:Segoe UI, Arial, sans-serif; background:#0f172a;">
-  <div style="max-width:560px; margin:0 auto; padding:24px;">
-    <div style="background:#1e293b; border:1px solid #334155; border-radius:16px; overflow:hidden;">
-      <div style="padding:22px 20px; border-bottom:1px solid #334155; text-align:center;">
-        <div style="display:inline-flex; align-items:center; gap:10px;">
-          <div style="font-size:26px; font-weight:900; color:#06b6d4; letter-spacing:1px;">NEXUS</div>
-          <div style="display:inline-block; padding:6px 10px; border-radius:999px; border:1px solid rgba(6,182,212,.55); background:rgba(6,182,212,.10); color:#7dd3fc; font-size:12px; font-weight:800;">
-            🧠 Secure
-          </div>
-        </div>
-        <div style="color:#94a3b8; font-size:13px; margin-top:6px;">Recuperación de contraseña</div>
-        <div style="margin-top:12px;">
-          <span style="display:inline-block; padding:8px 12px; border-radius:999px; background:#0b1220; border:1px solid #334155; color:#cbd5e1; font-size:12px; font-weight:700;">
-            ⏳ Tiempo restante: <span style="color:#7dd3fc; font-weight:900;">20 min</span>
-          </span>
-        </div>
-      </div>
-
-      <div style="padding:22px 20px; color:#f1f5f9;">
-        <p style="margin:0 0 14px 0; font-size:15px;">Hola <b>{name}</b>,</p>
-        <p style="margin:0 0 14px 0; font-size:14px; color:#cbd5e1; line-height:1.6;">
-          Recibimos una solicitud para restablecer tu contraseña. Haz clic en el botón:
-        </p>
-
-        <div style="text-align:center; margin:18px 0;">
-          <a href="{link}" style="display:inline-block; padding:12px 18px; border-radius:12px; background:#06b6d4; color:#0b1220; text-decoration:none; font-weight:900;">
-            Restablecer contraseña
-          </a>
-        </div>
-
-        <p style="margin:0 0 10px 0; font-size:13px; color:#94a3b8; line-height:1.5;">
-          Este enlace expira en <b>20 minutos</b>.
-        </p>
-
-        <div style="margin-top:18px; padding-top:14px; border-top:1px solid #334155; font-size:12px; color:#94a3b8;">
-          Si el botón no funciona, copia y pega este enlace:
-          <div style="word-break:break-all; margin-top:8px; color:#cbd5e1;">{link}</div>
-        </div>
-
-        <div style="margin-top:18px; padding-top:16px; border-top:1px solid #334155;">
-          <div style="display:inline-block; font-size:11px; letter-spacing:.6px; text-transform:uppercase; color:#94a3b8; background:#0b1220; border:1px solid #334155; padding:6px 10px; border-radius:999px;">
-            Soporte Nexus
-          </div>
-
-          <p style="margin:12px 0 10px 0; font-size:12.5px; color:#94a3b8; line-height:1.6;">
-            Este es un correo automático. Si necesitas ayuda, contáctanos por estos medios:
-          </p>
-
-          <div style="text-align:center; margin:14px 0 6px 0;">
-            <a href="mailto:jonathandavidloza@gmail.com" style="display:inline-block; margin:6px 6px; padding:10px 14px; border-radius:12px; background:#0b1220; border:1px solid #334155; color:#e2e8f0; text-decoration:none; font-weight:800; font-size:13px;">
-              ✉️ Escribir a soporte
-            </a>
-
-            <a href="https://wa.me/50364254348?text=Hola%20Nexus%2C%20necesito%20ayuda%20con%20mi%20cuenta."
-               style="display:inline-block; margin:6px 6px; padding:10px 14px; border-radius:12px; background:#06b6d4; border:1px solid #0891b2; color:#0b1220; text-decoration:none; font-weight:900; font-size:13px; box-shadow:0 0 0 3px rgba(6,182,212,.18), 0 0 22px rgba(6,182,212,.35);">
-              📲 WhatsApp soporte
-            </a>
-          </div>
-
-          <div style="margin-top:12px; padding:12px 12px; border-radius:14px; background:#0b1220; border:1px solid #334155; color:#94a3b8; font-size:12px; line-height:1.6;">
-            <b style="color:#e2e8f0;">Correo:</b>
-            <a href="mailto:jonathandavidloza@gmail.com" style="color:#7dd3fc; text-decoration:none;">jonathandavidloza@gmail.com</a><br>
-            <b style="color:#e2e8f0;">WhatsApp:</b>
-            <a href="https://wa.me/50364254348" style="color:#7dd3fc; text-decoration:none;">+503 6425 4348</a>
-          </div>
-
-          <div style="text-align:center; color:#64748b; font-size:12px; margin-top:14px;">
-            © 2026 Nexus • Seguridad de cuenta
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-"""
+        # HTML (bonito)
+        msg.html = build_reset_email_html(name=name, link=link)
 
         mail.send(msg)
         return True
 
     except Exception as e:
-        print("❌ Error enviando correo (SMTP):", repr(e))
-        print("❌ Tipo:", type(e).__name__)
-        print("🔗 LINK RESET (FALLBACK):", link)
-        return False
+        print("❌ Error enviando correo (SMTP/Brevo):", repr(e))
+        print("🔗 LINK RESET (FALLBACK DEV):", link)
+        return True  # no rompe el flujo del usuario aunque falle el SMTP
 
+
+# =========================================================
+# 12) CONTROL DE INTENTOS (anti-spam)
+# =========================================================
 def can_send_reset(email: str):
     now = datetime.utcnow()
     rr = ResetRequest.query.filter_by(email=email).first()
@@ -308,20 +425,24 @@ def can_send_reset(email: str):
         db.session.add(rr)
         db.session.commit()
 
+    # Si ya pasó la ventana, reiniciar contador
     if rr.first_attempt_at and now - rr.first_attempt_at > timedelta(minutes=RESET_WINDOW_MINUTES):
         rr.attempts = 0
         rr.first_attempt_at = None
         rr.last_sent_at = None
         db.session.commit()
 
+    # Cooldown entre envíos
     if rr.last_sent_at and (now - rr.last_sent_at).total_seconds() < RESET_COOLDOWN_SECONDS:
         wait = RESET_COOLDOWN_SECONDS - int((now - rr.last_sent_at).total_seconds())
         return False, wait, (rr.attempts >= RESET_MAX_ATTEMPTS)
 
+    # Max intentos
     if rr.attempts >= RESET_MAX_ATTEMPTS:
         return False, 0, True
 
     return True, 0, False
+
 
 def register_reset_sent(email: str):
     now = datetime.utcnow()
@@ -337,7 +458,10 @@ def register_reset_sent(email: str):
     rr.last_sent_at = now
     db.session.commit()
 
-# 5. RUTAS
+
+# =========================================================
+# 13) RUTAS AUTH (Login/Register/Reset)
+# =========================================================
 @app.route('/login', methods=['GET', 'POST'])
 def login_page():
     if current_user.is_authenticated:
@@ -365,6 +489,7 @@ def login_page():
         show_forgot = session.get("show_forgot", False)
 
     return render_template('login.html', show_forgot=show_forgot)
+
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -394,11 +519,13 @@ def register():
     login_user(new_user)
     return redirect(url_for('home'))
 
+
 @app.route('/logout')
 @login_required
 def logout():
     logout_user()
     return redirect(url_for('login_page'))
+
 
 @app.route('/forgot', methods=['GET', 'POST'])
 def forgot_password():
@@ -418,6 +545,7 @@ def forgot_password():
                 flash("Se alcanzó el máximo de intentos. Contacta soporte técnico.", "error")
             return render_template("forgot_password.html", show_support=show_support)
 
+        # Importante: por seguridad, aunque el user NO exista, mostramos el mismo mensaje.
         if user:
             token = serializer.dumps(email, salt="reset-password")
             link = url_for('reset_password', token=token, _external=True)
@@ -430,6 +558,7 @@ def forgot_password():
         return render_template("forgot_password.html", show_support=show_support)
 
     return render_template('forgot_password.html', show_support=show_support)
+
 
 @app.route('/reset/<token>', methods=['GET', 'POST'])
 def reset_password(token):
@@ -464,7 +593,10 @@ def reset_password(token):
 
     return render_template('reset_password.html', token=token)
 
-# --- CHAT ---
+
+# =========================================================
+# 14) CHAT
+# =========================================================
 @app.route('/')
 @app.route('/c/<int:chat_id>')
 @login_required
@@ -489,6 +621,7 @@ def home(chat_id=None):
         active_chat=chat_activo
     )
 
+
 @app.route('/new_chat')
 @login_required
 def new_chat():
@@ -496,6 +629,7 @@ def new_chat():
     db.session.add(nueva_convo)
     db.session.commit()
     return redirect(url_for('home', chat_id=nueva_convo.id))
+
 
 @app.route('/delete_chat/<int:chat_id>', methods=['POST'])
 @login_required
@@ -506,6 +640,7 @@ def delete_chat(chat_id):
         db.session.commit()
         return jsonify({'success': True})
     return jsonify({'success': False}), 403
+
 
 @app.route('/chat', methods=['POST'])
 @login_required
@@ -601,5 +736,9 @@ def chat():
         print(f"❌ ERROR: {e}")
         return jsonify({'response': "Tuve un problema técnico procesando eso. Intenta de nuevo."})
 
+
+# =========================================================
+# 15) RUN LOCAL
+# =========================================================
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run()
