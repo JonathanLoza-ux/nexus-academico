@@ -3,6 +3,7 @@ import random
 import re
 from datetime import datetime, timedelta
 from io import BytesIO
+import requests
 
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session
 from dotenv import load_dotenv
@@ -69,7 +70,19 @@ RESET_TOKEN_MAX_AGE = 20 * 60  # 20 minutos
 # ✅ Modo reset:
 # - dev  -> imprime link en consola
 # - smtp -> envía correo real por SMTP (Brevo / Gmail / etc)
+# - brevo_api -> usa la API REST de Brevo
 RESET_MODE = (os.getenv("RESET_MODE") or "dev").strip().lower()
+
+# 3) Agregar variables Brevo después de RESET_MODE
+BREVO_API_KEY = (os.getenv("BREVO_API_KEY") or "").strip()
+BREVO_SENDER_NAME = (os.getenv("BREVO_SENDER_NAME") or "Nexus Academy").strip()
+BREVO_SENDER_EMAIL = (os.getenv("BREVO_SENDER_EMAIL") or "").strip()
+
+# Si falta api key o sender y estás en modo brevo_api, cae a dev
+if RESET_MODE == "brevo_api":
+    if (not BREVO_API_KEY) or (not BREVO_SENDER_EMAIL):
+        print("⚠️ RESET_MODE=brevo_api pero falta BREVO_API_KEY o BREVO_SENDER_EMAIL. Forzando RESET_MODE=dev")
+        RESET_MODE = "dev"
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -369,7 +382,7 @@ def build_reset_email_html(name: str, link: str) -> str:
 
 
 # =========================================================
-# 11) ENVÍO DEL CORREO (dev / smtp)
+# 11) ENVÍO DEL CORREO (dev / smtp / brevo_api)
 # =========================================================
 def send_reset_link(email, name, link):
     mode = (RESET_MODE or "dev").strip().lower()
@@ -380,6 +393,56 @@ def send_reset_link(email, name, link):
         print("🔗 LINK RESET (DEV):", link)
         print("==============================\n")
         return True
+
+    # BREVO API (HTTP)
+    if mode == "brevo_api":
+        try:
+            subject = "Recuperación de contraseña - Nexus"
+            text_body = f"""Hola {name},
+
+Recibimos una solicitud para restablecer tu contraseña.
+Este enlace es válido por 20 minutos:
+
+{link}
+
+Si tú no hiciste esta solicitud, ignora este mensaje.
+
+---
+Soporte:
+Correo: jonathandavidloza@gmail.com
+WhatsApp: https://wa.me/50364254348
+"""
+
+            html_body = build_reset_email_html(name=name, link=link)
+
+            url = "https://api.brevo.com/v3/smtp/email"
+            headers = {
+                "accept": "application/json",
+                "api-key": BREVO_API_KEY,
+                "content-type": "application/json",
+            }
+            payload = {
+                "sender": {"name": BREVO_SENDER_NAME, "email": BREVO_SENDER_EMAIL},
+                "to": [{"email": email, "name": name}],
+                "subject": subject,
+                "htmlContent": html_body,
+                "textContent": text_body,
+                "replyTo": {"email": "jonathandavidloza@gmail.com", "name": "Soporte Nexus"},
+            }
+
+            r = requests.post(url, headers=headers, json=payload, timeout=10)
+
+            if 200 <= r.status_code < 300:
+                return True
+
+            print("❌ Error Brevo API:", r.status_code, r.text)
+            print("🔗 LINK RESET (FALLBACK):", link)
+            return False
+
+        except Exception as e:
+            print("❌ Exception Brevo API:", repr(e))
+            print("🔗 LINK RESET (FALLBACK):", link)
+            return False
 
     # SMTP: envía correo real (Brevo/Gmail/etc)
     try:
