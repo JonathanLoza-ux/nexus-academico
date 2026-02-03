@@ -294,7 +294,8 @@ WhatsApp: https://wa.me/50364254348
         return True
 
     except Exception as e:
-        print("❌ Error enviando correo:", e)
+        print("❌ Error enviando correo (SMTP):", repr(e))
+        print("❌ Tipo:", type(e).__name__)
         print("🔗 LINK RESET (FALLBACK):", link)
         return False
 
