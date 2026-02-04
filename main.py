@@ -23,6 +23,7 @@ import cloudinary.uploader
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from flask_mail import Mail, Message as MailMessage
 
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 # =========================================================
 # 1) CARGA DE VARIABLES DE ENTORNO (.env)
@@ -57,11 +58,38 @@ configurar_gemini_random()
 # 2) CONFIGURACIÓN DE LA APP
 # =========================================================
 app = Flask(__name__)
-app.secret_key = 'clave_secreta_super_segura'  # ⚠️ en producción: usar variable de entorno
+
+# ==========================
+# 🔐 Seguridad base (Fase 0)
+# ==========================
+
+# Entorno: dev / prod
+ENVIRONMENT = (os.getenv("ENVIRONMENT") or "dev").strip().lower()
+
+# Secret key desde entorno (MUY IMPORTANTE en producción)
+app.secret_key = (os.getenv("SECRET_KEY") or "dev_secret_key_change_me").strip()
+
+# Cookies de sesión más seguras:
+# - SECURE solo cuando estés en HTTPS (Render sí, local no)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = (ENVIRONMENT == "prod")  # True en Render, False local
+
+# Opcional: duración de sesión (ej. 7 días)
+# from datetime import timedelta
+# app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=7)
+
+# ✅ ProxyFix: permite obtener IP real y scheme correcto detrás de Render
+# x_for=1 y x_proto=1 suelen ser suficientes en Render
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 
 # ✅ Para que url_for(..., _external=True) genere bien enlaces en producción (Render/otro)
 if os.getenv("SERVER_NAME"):
     app.config["SERVER_NAME"] = os.getenv("SERVER_NAME").strip()
+
+# Forzar HTTPS en producción
+if ENVIRONMENT == "prod":
+    app.config["PREFERRED_URL_SCHEME"] = "https"
 
 # ✅ Serializador para tokens de reset
 serializer = URLSafeTimedSerializer(app.secret_key)
