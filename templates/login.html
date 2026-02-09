@@ -32,14 +32,15 @@
                 <button id="btn-register" onclick="mostrarRegistro()">Registrarse</button>
             </div>
 
-            <form id="login-form" action="/login" method="POST">
+            <!-- ✅ FORM LOGIN CON AUTOCOMPLETE OFF -->
+            <form id="login-form" method="POST" action="/login" autocomplete="off">
                 <div class="input-group">
                     <i class="fas fa-envelope"></i>
-                    <input type="email" name="email" placeholder="Correo Electrónico" autocomplete="email" required>
+                    <input type="email" name="email" placeholder="Correo Electrónico" autocomplete="off" required>
                 </div>
                 <div class="input-group">
                     <i class="fas fa-lock"></i>
-                    <input type="password" name="password" id="login-pass" placeholder="Contraseña" autocomplete="current-password" required>
+                    <input type="password" name="password" id="login-pass" placeholder="Contraseña" autocomplete="new-password" required>
                     <i class="fas fa-eye toggle-eye" onclick="togglePassword('login-pass', this)"></i>
                 </div>
                 {% if show_forgot %}
@@ -50,14 +51,15 @@
                 <button type="submit" class="submit-btn">Entrar</button>
             </form>
 
-            <form id="register-form" action="/register" method="POST" style="display: none;">
+            <!-- ✅ FORM REGISTER CON AUTOCOMPLETE OFF -->
+            <form id="register-form" method="POST" action="/register" autocomplete="off" style="display: none;">
                 <div class="input-group">
                     <i class="fas fa-user"></i>
-                    <input type="text" name="nombre" placeholder="Tu Nombre" required>
+                    <input type="text" name="nombre" placeholder="Tu Nombre" autocomplete="off" required>
                 </div>
                 <div class="input-group">
                     <i class="fas fa-envelope"></i>
-                    <input type="email" name="email" placeholder="Correo Electrónico" autocomplete="email" required>
+                    <input type="email" name="email" placeholder="Correo Electrónico" autocomplete="off" required>
                 </div>
                 <div class="input-group">
                     <i class="fas fa-lock"></i>

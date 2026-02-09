@@ -229,7 +229,7 @@ async function enviarMensaje() {
     const div = document.createElement('div');
     div.className = 'message bot-msg';
     const content = document.createElement('div');
-    content.className = 'msg-content';
+    content.className = 'msg-content rendered-text';
     div.appendChild(content);
     chatBox.appendChild(div);
 

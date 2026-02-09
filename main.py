@@ -1,9 +1,12 @@
 import os
 import random
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone  # ✅ Cambio 1: Añadido timezone
 from io import BytesIO
 import requests
+import logging
+import time
+import uuid
 
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session
 from dotenv import load_dotenv
@@ -33,7 +36,19 @@ load_dotenv()
 # Cloudinary (para imágenes)
 CLOUDINARY_URL = os.getenv("CLOUDINARY_URL")
 if CLOUDINARY_URL:
-    cloudinary.config(cloudinary_url=CLOUDINARY_URL, secure=True)
+    # FIX: recargar config desde env para parsear api_key/api_secret
+    # (evita el error "Must supply api_key" al subir imagen)
+    cloudinary.reset_config()
+    cloudinary.config(secure=True)
+    # DEBUG (DEV): confirma que Cloudinary cargó credenciales sin exponer secretos
+    if (os.getenv("ENVIRONMENT") or "dev").strip().lower() == "dev":
+        cfg = cloudinary.config()
+        api_key = cfg.api_key or ""
+        api_key_mask = f"...{api_key[-4:]}" if api_key else "None"
+        print("=== CLOUDINARY DEBUG ===")
+        print("CLOUDINARY cloud_name:", repr(cfg.cloud_name))
+        print("CLOUDINARY api_key:", repr(api_key_mask))
+        print("========================")
 
 # Gemini Keys (varias claves separadas por coma)
 claves_string = os.getenv("GEMINI_KEYS")
@@ -43,21 +58,36 @@ if not claves_string:
 else:
     LISTA_DE_CLAVES = [key.strip() for key in claves_string.split(',') if key.strip()]
 
-
+# =========================================================
+# PASO B: Modificar configurar_gemini_random() para que devuelva la key
+# =========================================================
 def configurar_gemini_random():
-    """Elige una clave random para Gemini (útil si tenés varias)."""
-    if LISTA_DE_CLAVES:
-        clave_elegida = random.choice(LISTA_DE_CLAVES)
-        genai.configure(api_key=clave_elegida)
+    """Elige una clave random para Gemini y la configura."""
+    if not LISTA_DE_CLAVES:
+        return None
+    clave_elegida = random.choice(LISTA_DE_CLAVES)
+    genai.configure(api_key=clave_elegida)
+    return clave_elegida
 
 
 configurar_gemini_random()
-
 
 # =========================================================
 # 2) CONFIGURACIÓN DE LA APP
 # =========================================================
 app = Flask(__name__)
+
+# =========================================================
+# LOGS PRO (Fase 1.9)
+# =========================================================
+logger = logging.getLogger("nexus")
+logger.setLevel(logging.INFO)
+
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 # ==========================
 # 🔐 Seguridad base (Fase 0)
@@ -112,10 +142,10 @@ if RESET_MODE == "brevo_api":
         print("⚠️ RESET_MODE=brevo_api pero falta BREVO_API_KEY o BREVO_SENDER_EMAIL. Forzando RESET_MODE=dev")
         RESET_MODE = "dev"
 
-from werkzeug.middleware.proxy_fix import ProxyFix
-
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-app.config["PREFERRED_URL_SCHEME"] = "https"
+# 🔒 Bloque repetido (comentado) - NO BORRAR, solo dejarlo desactivado
+# from werkzeug.middleware.proxy_fix import ProxyFix
+# app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+# app.config["PREFERRED_URL_SCHEME"] = "https"
 
 # =========================================================
 # 3) CONFIG SMTP (BREVO / GMAIL / CUALQUIERA)
@@ -155,17 +185,20 @@ print("==================")
 
 mail = Mail(app)
 
-
 # =========================================================
 # 4) BASE DE DATOS (Clever Cloud MySQL)
 # =========================================================
-uri_db = 'mysql+pymysql://udmqmivnwwrjopej:jPWHA7KXpYOqG8lgg3bX@bstpf7hytdgr1gantoui-mysql.services.clever-cloud.com:3306/bstpf7hytdgr1gantoui'
+# ✅ Ahora se lee desde .env (más seguro)
+uri_db = (os.getenv("DATABASE_URL") or "").strip()
+
+if not uri_db:
+    raise RuntimeError("❌ Falta DATABASE_URL en el .env / Render Environment Variables")
+
 app.config['SQLALCHEMY_DATABASE_URI'] = uri_db
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_recycle': 280}
 
 db = SQLAlchemy(app)
-
 
 # =========================================================
 # 5) LOGIN (Flask-Login)
@@ -175,16 +208,83 @@ login_manager.init_app(app)
 login_manager.login_view = 'login_page'
 login_manager.login_message = None
 
-
 # =========================================================
 # 6) VALIDACIONES Y SUBIDAS
 # =========================================================
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_RE = re.compile(r"^(?=.*[A-Za-z])(?=.*[^A-Za-z0-9]).{6,}$")
 
+# =========================================================
+# Fase 1 — Paso 2: Helper de IP real (lo usaremos en reset/login)
+# =========================================================
+def get_client_ip():
+    """
+    Obtiene la dirección IP real del cliente considerando proxies intermedios.
+    """
+    if request.access_route:
+        return request.access_route[0]
+    return request.remote_addr or "0.0.0.0"
+
+
+@app.before_request
+def _before_request_logging():
+    request._start_time = time.time()
+    request._rid = uuid.uuid4().hex[:12]
+
+
+@app.after_request
+def _after_request_logging(response):
+    try:
+        elapsed_ms = int((time.time() - getattr(request, "_start_time", time.time())) * 1000)
+        rid = getattr(request, "_rid", "-")
+        ip = get_client_ip()
+
+        # No ensuciar logs con archivos estáticos
+        if not request.path.startswith("/static/"):
+            logger.info(
+                f"HTTP rid={rid} method={request.method} path={request.path} "
+                f"status={response.status_code} ip={ip} ms={elapsed_ms}"
+            )
+    except Exception:
+        pass
+    return response
+
+
+def log_event(event: str, **fields):
+    """
+    Log estructurado tipo:
+    EVENT rid=xxxx key=value key=value
+    """
+    rid = getattr(request, "_rid", "-")
+    base = f"{event} rid={rid}"
+
+    parts = []
+    for k, v in fields.items():
+        if v is None:
+            continue
+        parts.append(f"{k}={str(v).replace(' ', '_')}")
+
+    msg = base + (" " + " ".join(parts) if parts else "")
+    logger.info(msg)
+
+
 UPLOAD_DIR = os.path.join(app.root_path, 'static', 'uploads')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# =========================================================
+# HELPERS DE FECHAS NAIVE UTC (compatibles con MySQL)
+# =========================================================
+def utcnow_naive():
+    """UTC naive sin usar datetime.utcnow() (evita DeprecationWarning)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+def to_naive_utc(dt):
+    """Convierte aware->naive UTC. Si ya es naive, lo deja igual."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 # =========================================================
 # 7) MODELOS
@@ -200,7 +300,7 @@ class User(UserMixin, db.Model):
 class Conversation(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(100), default="Nuevo Chat")
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow_naive)  # ✅ Cambiado a naive UTC
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     messages = db.relationship('Message', backref='conversation', lazy=True, cascade="all, delete-orphan")
 
@@ -209,7 +309,7 @@ class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     content = db.Column(db.Text, nullable=False)
     sender = db.Column(db.String(10), nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    timestamp = db.Column(db.DateTime, default=utcnow_naive)  # ✅ Cambiado a naive UTC
     has_image = db.Column(db.Boolean, default=False)
     conversation_id = db.Column(db.Integer, db.ForeignKey('conversation.id'), nullable=False)
 
@@ -225,13 +325,78 @@ class ResetRequest(db.Model):
     first_attempt_at = db.Column(db.DateTime, nullable=True)
 
 
+# =========================================================
+# Fase 1 — Paso 3: Nuevos modelos (DB) para límites por IP y login attempts
+# =========================================================
+class ResetIPRequest(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    ip = db.Column(db.String(64), index=True, unique=True, nullable=False)
+
+    last_sent_at = db.Column(db.DateTime, nullable=True)
+    attempts = db.Column(db.Integer, default=0)
+    first_attempt_at = db.Column(db.DateTime, nullable=True)
+
+    blocked_until = db.Column(db.DateTime, nullable=True)
+
+
+class LoginAttempt(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+
+    ip = db.Column(db.String(64), index=True, nullable=False)
+    email = db.Column(db.String(100), index=True, nullable=True)
+
+    attempts = db.Column(db.Integer, default=0)
+    first_attempt_at = db.Column(db.DateTime, nullable=True)
+
+    blocked_until = db.Column(db.DateTime, nullable=True)
+
+
+# =========================================================
+# Fase 2 — Paso 2.1: Modelo para Rate Limit genérico (DB)
+# =========================================================
+class RateLimit(db.Model):
+    """
+    Tabla genérica para rate limiting persistente en DB.
+    Funciona con múltiples workers (Render).
+    """
+    id = db.Column(db.Integer, primary_key=True)
+
+    key = db.Column(db.String(200), unique=True, nullable=False, index=True)
+    window_start = db.Column(db.DateTime, nullable=True)
+    count = db.Column(db.Integer, default=0)
+
+    blocked_until = db.Column(db.DateTime, nullable=True)
+
+
+# =========================================================
+# VERIFICACIÓN DE CREACIÓN DE TABLAS
+# =========================================================
+print("=== CREANDO/MODIFICANDO TABLAS ===")
+if ENVIRONMENT == "dev":
+    print("Modelos detectados:", [model.__name__ for model in db.Model.__subclasses__()])
+
 with app.app_context():
     db.create_all()
+    print("=== TABLAS CREADAS/VERIFICADAS ===")
+    
+    # =========================================================
+    # TEMPORAL: Limpiar datos de RateLimit con fechas mezcladas
+    # (Ejecutar solo una vez, luego comentar o eliminar)
+    # =========================================================
+    #try:
+     #   deleted = RateLimit.query.delete()
+      #  db.session.commit()
+       # if deleted > 0:
+        #    print(f"🧹 Se limpiaron {deleted} registros antiguos de RateLimit")
+    #except Exception as e:
+     #   print(f"⚠️ Error al limpiar RateLimit: {e}")
+    # =========================================================
 
 
+# ✅ Dejar SOLO un user_loader
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))  # ✅ Cambio 4: Query.get() -> db.session.get()
 
 
 # =========================================================
@@ -246,13 +411,17 @@ REGLAS:
 """
 configuracion = {"temperature": 0.7}
 
-model = genai.GenerativeModel(
-    model_name='gemini-flash-latest',
-    generation_config=configuracion,
-    system_instruction=instruccion_sistema
-)
-chat_session = model.start_chat(history=[])
-
+# =========================================================
+# Objetivo Fase 1 (solo esto ahorita)
+# Quitar el error “Must supply api_key” y hacer que Gemini siempre analice la imagen.
+# Paso A
+# =========================================================
+#model = genai.GenerativeModel(
+ #   model_name='gemini-flash-latest',
+  #  generation_config=configuracion,
+   # system_instruction=instruccion_sistema
+#)
+#chat_session = model.start_chat(history=[])
 
 # =========================================================
 # 9) RESET LIMITS (anti-spam)
@@ -261,15 +430,44 @@ RESET_COOLDOWN_SECONDS = 60
 RESET_MAX_ATTEMPTS = 3
 RESET_WINDOW_MINUTES = 30  # ventana en la que cuentan los 3 intentos
 
+# =========================================================
+# Fase 1 — Paso 4: Constantes de límites (fácil de ajustar)
+# =========================================================
+RESET_IP_MAX_ATTEMPTS = 8
+RESET_IP_WINDOW_MINUTES = 30
+RESET_IP_BLOCK_MINUTES = 15
+
+LOGIN_MAX_ATTEMPTS = 7
+LOGIN_WINDOW_MINUTES = 10
+LOGIN_BLOCK_MINUTES = 10
+
+# =========================================================
+# Fase 2 — Paso 2.2: Constantes de Rate Limits
+# =========================================================
+# Login endpoint (anti-bots)
+LOGIN_RL_MAX = 20              # 20 requests
+LOGIN_RL_WINDOW_S = 60         # por 60s
+LOGIN_RL_BLOCK_S = 60          # bloqueo 60s si abusa
+
+# Forgot endpoint
+FORGOT_RL_MAX = 10             # 10 requests
+FORGOT_RL_WINDOW_S = 300       # por 5 min
+FORGOT_RL_BLOCK_S = 300        # bloqueo 5 min
+
+# Chat endpoint (protege Gemini)
+CHAT_RL_MAX = 12               # 12 mensajes
+CHAT_RL_WINDOW_S = 60          # por 60s
+CHAT_RL_BLOCK_S = 60           # bloqueo 60s
+
+# Límites de payload (seguridad + costos)
+CHAT_MAX_TEXT_CHARS = 2000
+CHAT_MAX_IMAGE_BYTES = 8 * 1024 * 1024   # 8MB
+
 
 # =========================================================
 # 10) HTML del correo (Reset)
 # =========================================================
 def build_reset_email_html(name: str, link: str) -> str:
-    """
-    HTML para el correo de recuperación.
-    Importante: mantenerlo simple y compatible con Gmail/Outlook.
-    """
     return f"""
 <div style="margin:0; padding:0; background:#0b1220; font-family:Segoe UI, Arial, sans-serif;">
   <div style="max-width:640px; margin:0 auto; padding:28px 16px;">
@@ -402,7 +600,6 @@ def build_reset_email_html(name: str, link: str) -> str:
         </div>
 
       </div>
-
     </div>
   </div>
 </div>
@@ -415,14 +612,13 @@ def build_reset_email_html(name: str, link: str) -> str:
 def send_reset_link(email, name, link):
     mode = (RESET_MODE or "dev").strip().lower()
 
-    # DEV: imprime enlace en consola (para no gastar envíos)
     if mode == "dev":
         print("\n==============================")
         print("🔗 LINK RESET (DEV):", link)
         print("==============================\n")
+        log_event("EMAIL_SENT", provider="dev_console", to=email, ok=True)
         return True
 
-    # BREVO API (HTTP)
     if mode == "brevo_api":
         try:
             subject = "Recuperación de contraseña - Nexus"
@@ -440,7 +636,6 @@ Soporte:
 Correo: jonathandavidloza@gmail.com
 WhatsApp: https://wa.me/50364254348
 """
-
             html_body = build_reset_email_html(name=name, link=link)
 
             url = "https://api.brevo.com/v3/smtp/email"
@@ -461,18 +656,20 @@ WhatsApp: https://wa.me/50364254348
             r = requests.post(url, headers=headers, json=payload, timeout=10)
 
             if 200 <= r.status_code < 300:
+                log_event("EMAIL_SENT", provider="brevo_api", to=email, ok=True, status=r.status_code)
                 return True
 
             print("❌ Error Brevo API:", r.status_code, r.text)
             print("🔗 LINK RESET (FALLBACK):", link)
+            log_event("EMAIL_SENT", provider="brevo_api", to=email, ok=False, status=r.status_code)
             return False
 
         except Exception as e:
             print("❌ Exception Brevo API:", repr(e))
             print("🔗 LINK RESET (FALLBACK):", link)
+            log_event("EMAIL_SENT", provider="brevo_api", to=email, ok=False, error=str(e))
             return False
 
-    # SMTP: envía correo real (Brevo/Gmail/etc)
     try:
         msg = MailMessage(
             subject="Recuperación de contraseña - Nexus",
@@ -481,7 +678,6 @@ WhatsApp: https://wa.me/50364254348
 
         msg.reply_to = "jonathandavidloza@gmail.com"
 
-        # Texto plano (por compatibilidad y anti-spam)
         msg.body = f"""Hola {name},
 
 Recibimos una solicitud para restablecer tu contraseña.
@@ -492,23 +688,24 @@ Este enlace es válido por 20 minutos:
 Si tú no hiciste esta solicitud, ignora este mensaje.
 """
 
-        # HTML (bonito)
         msg.html = build_reset_email_html(name=name, link=link)
 
         mail.send(msg)
+        log_event("EMAIL_SENT", provider="smtp", to=email, ok=True)
         return True
 
     except Exception as e:
         print("❌ Error enviando correo (SMTP/Brevo):", repr(e))
         print("🔗 LINK RESET (FALLBACK DEV):", link)
-        return True  # no rompe el flujo del usuario aunque falle el SMTP
+        log_event("EMAIL_SENT", provider="smtp", to=email, ok=False, error=str(e))
+        return True
 
 
 # =========================================================
-# 12) CONTROL DE INTENTOS (anti-spam)
+# 12) CONTROL DE INTENTOS (anti-spam) - CORREGIDO CON NAIVE UTC
 # =========================================================
 def can_send_reset(email: str):
-    now = datetime.utcnow()
+    now = utcnow_naive()  # ✅ Cambiado a naive UTC
     rr = ResetRequest.query.filter_by(email=email).first()
 
     if not rr:
@@ -516,19 +713,19 @@ def can_send_reset(email: str):
         db.session.add(rr)
         db.session.commit()
 
-    # Si ya pasó la ventana, reiniciar contador
-    if rr.first_attempt_at and now - rr.first_attempt_at > timedelta(minutes=RESET_WINDOW_MINUTES):
+    first = to_naive_utc(rr.first_attempt_at)
+    last = to_naive_utc(rr.last_sent_at)
+
+    if first and now - first > timedelta(minutes=RESET_WINDOW_MINUTES):
         rr.attempts = 0
         rr.first_attempt_at = None
         rr.last_sent_at = None
         db.session.commit()
 
-    # Cooldown entre envíos
-    if rr.last_sent_at and (now - rr.last_sent_at).total_seconds() < RESET_COOLDOWN_SECONDS:
-        wait = RESET_COOLDOWN_SECONDS - int((now - rr.last_sent_at).total_seconds())
+    if last and (now - last).total_seconds() < RESET_COOLDOWN_SECONDS:
+        wait = RESET_COOLDOWN_SECONDS - int((now - last).total_seconds())
         return False, wait, (rr.attempts >= RESET_MAX_ATTEMPTS)
 
-    # Max intentos
     if rr.attempts >= RESET_MAX_ATTEMPTS:
         return False, 0, True
 
@@ -536,7 +733,7 @@ def can_send_reset(email: str):
 
 
 def register_reset_sent(email: str):
-    now = datetime.utcnow()
+    now = utcnow_naive()  # ✅ Cambiado a naive UTC
     rr = ResetRequest.query.filter_by(email=email).first()
     if not rr:
         rr = ResetRequest(email=email)
@@ -548,6 +745,172 @@ def register_reset_sent(email: str):
     rr.attempts = (rr.attempts or 0) + 1
     rr.last_sent_at = now
     db.session.commit()
+
+
+def can_send_reset_ip(ip: str):
+    now = utcnow_naive()  # ✅ Cambiado a naive UTC
+    row = ResetIPRequest.query.filter_by(ip=ip).first()
+    if not row:
+        row = ResetIPRequest(ip=ip)
+        db.session.add(row)
+        db.session.commit()
+
+    blocked_until = to_naive_utc(row.blocked_until)
+    first_attempt_at = to_naive_utc(row.first_attempt_at)
+    last_sent_at = to_naive_utc(row.last_sent_at)
+
+    if blocked_until and now < blocked_until:
+        wait = int((blocked_until - now).total_seconds())
+        return False, wait, True
+
+    if first_attempt_at and now - first_attempt_at > timedelta(minutes=RESET_IP_WINDOW_MINUTES):
+        row.attempts = 0
+        row.first_attempt_at = None
+        row.last_sent_at = None
+        row.blocked_until = None
+        db.session.commit()
+
+    if (row.attempts or 0) >= RESET_IP_MAX_ATTEMPTS:
+        row.blocked_until = now + timedelta(minutes=RESET_IP_BLOCK_MINUTES)
+        db.session.commit()
+        wait = int((row.blocked_until - now).total_seconds())
+        return False, wait, True
+
+    return True, 0, False
+
+
+def register_reset_ip_sent(ip: str):
+    now = utcnow_naive()  # ✅ Cambiado a naive UTC
+    row = ResetIPRequest.query.filter_by(ip=ip).first()
+    if not row:
+        row = ResetIPRequest(ip=ip)
+        db.session.add(row)
+
+    if (row.attempts or 0) == 0 or row.first_attempt_at is None:
+        row.first_attempt_at = now
+
+    row.attempts = (row.attempts or 0) + 1
+    row.last_sent_at = now
+    db.session.commit()
+
+
+def can_login(ip: str, email: str):
+    now = utcnow_naive()  # ✅ Cambiado a naive UTC
+    row = LoginAttempt.query.filter_by(ip=ip, email=email).first()
+    if not row:
+        row = LoginAttempt(ip=ip, email=email)
+        db.session.add(row)
+        db.session.commit()
+
+    blocked_until = to_naive_utc(row.blocked_until)
+    first_attempt_at = to_naive_utc(row.first_attempt_at)
+
+    if blocked_until and now < blocked_until:
+        wait = int((blocked_until - now).total_seconds())
+        return False, wait
+
+    if first_attempt_at and now - first_attempt_at > timedelta(minutes=LOGIN_WINDOW_MINUTES):
+        row.attempts = 0
+        row.first_attempt_at = None
+        row.blocked_until = None
+        db.session.commit()
+
+    if (row.attempts or 0) >= LOGIN_MAX_ATTEMPTS:
+        row.blocked_until = now + timedelta(minutes=LOGIN_BLOCK_MINUTES)
+        db.session.commit()
+        wait = int((row.blocked_until - now).total_seconds())
+        return False, wait
+
+    return True, 0
+
+
+def register_login_fail(ip: str, email: str):
+    now = utcnow_naive()  # ✅ Cambiado a naive UTC
+    row = LoginAttempt.query.filter_by(ip=ip, email=email).first()
+    if not row:
+        row = LoginAttempt(ip=ip, email=email)
+        db.session.add(row)
+
+    if (row.attempts or 0) == 0 or row.first_attempt_at is None:
+        row.first_attempt_at = now
+
+    row.attempts = (row.attempts or 0) + 1
+    db.session.commit()
+
+
+def clear_login_attempts(ip: str, email: str):
+    row = LoginAttempt.query.filter_by(ip=ip, email=email).first()
+    if row:
+        db.session.delete(row)
+        db.session.commit()
+
+
+# =========================================================
+# Fase 2 — Paso 2.3: Helpers de Rate Limit (DB persistente)
+# =========================================================
+def _rl_key(endpoint: str, ip: str, user_id: int | None = None) -> str:
+    """
+    Genera una clave única para rate limiting.
+    Formato: endpoint:ip:user_id (si hay usuario)
+    """
+    uid = user_id or 0
+    return f"{endpoint}:{ip}:{uid}"
+
+
+def _as_utc_naive(dt):
+    """
+    Convierte cualquier datetime (aware o naive) a naive en UTC.
+    - Si ya es naive, se asume que es UTC.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt  # asumimos UTC
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def rate_limit_check(key: str, max_count: int, window_seconds: int, block_seconds: int):
+    """
+    Rate limit persistente en DB.
+    Retorna: (ok, wait_s)
+    """
+    # Trabajamos EN NAIVE UTC para evitar choque con valores DB (naive)
+    # FIX: evitar datetime.utcnow() (deprecated)
+    now = utcnow_naive()
+
+    row = RateLimit.query.filter_by(key=key).first()
+    if not row:
+        row = RateLimit(key=key, window_start=now, count=0, blocked_until=None)
+        db.session.add(row)
+        db.session.commit()
+
+    window_start = _as_utc_naive(row.window_start)
+    blocked_until = _as_utc_naive(row.blocked_until)
+
+    # si está bloqueado
+    if blocked_until and now < blocked_until:
+        wait = int((blocked_until - now).total_seconds())
+        return False, wait
+
+    # reset de ventana si pasó el tiempo
+    if window_start and (now - window_start).total_seconds() > window_seconds:
+        row.window_start = now
+        row.count = 0
+        row.blocked_until = None
+        db.session.commit()
+        return True, 0
+
+    # contar el request actual
+    row.count = (row.count or 0) + 1
+
+    if row.count > max_count:
+        row.blocked_until = now + timedelta(seconds=block_seconds)
+        db.session.commit()
+        wait = int((row.blocked_until - now).total_seconds())
+        return False, wait
+
+    db.session.commit()
+    return True, 0
 
 
 # =========================================================
@@ -564,16 +927,48 @@ def login_page():
         email = (request.form.get('email') or "").strip().lower()
         password = request.form.get('password') or ""
 
+        ip = get_client_ip()
+
+        # =========================================================
+        # Fase 2 — Paso 2.4: Rate limit para /login (anti-bots)
+        # =========================================================
+        rl_ok, rl_wait = rate_limit_check(
+            key=_rl_key("login", ip, None),
+            max_count=LOGIN_RL_MAX,
+            window_seconds=LOGIN_RL_WINDOW_S,
+            block_seconds=LOGIN_RL_BLOCK_S
+        )
+        if not rl_ok:
+            flash(f"Demasiadas solicitudes. Espera {rl_wait} segundos e intenta de nuevo.", "error")
+            session["show_forgot"] = True
+            return render_template('login.html', show_forgot=True)
+        # =========================================================
+
+        ok_login, wait_login = can_login(ip, email)
+        if not ok_login:
+            log_event("LOGIN_BLOCKED", email=email, ip=ip, wait_s=wait_login)
+            flash(f"Demasiados intentos. Espera {wait_login} segundos o usa recuperación de contraseña.", "error")
+            session["show_forgot"] = True
+            return render_template('login.html', show_forgot=True)
+
         user = User.query.filter_by(email=email).first()
 
         if not user:
+            log_event("LOGIN_FAIL", email=email, ip=ip, reason="no_user")
             flash('Este correo no está registrado.', 'error')
             session["show_forgot"] = True
+            register_login_fail(ip, email)
+
         elif not check_password_hash(user.password, password):
+            log_event("LOGIN_FAIL", email=email, ip=ip, reason="bad_password")
             flash('Contraseña incorrecta. Inténtalo de nuevo.', 'error')
             session["show_forgot"] = True
+            register_login_fail(ip, email)
+
         else:
+            log_event("LOGIN_OK", email=email, ip=ip, user_id=user.id)
             session.pop("show_forgot", None)
+            clear_login_attempts(ip, email)
             login_user(user)
             return redirect(url_for('home'))
 
@@ -615,6 +1010,7 @@ def register():
 @login_required
 def logout():
     logout_user()
+    session.clear()
     return redirect(url_for('login_page'))
 
 
@@ -626,24 +1022,57 @@ def forgot_password():
         email = (request.form.get('email') or "").strip().lower()
         user = User.query.filter_by(email=email).first()
 
+        log_event("RESET_REQUEST", email=email, ip=get_client_ip())
+
         ok, wait, support = can_send_reset(email)
         show_support = support
 
+        ip = get_client_ip()
+
+        # =========================================================
+        # Fase 2 — Paso 2.5: Rate limit para /forgot (anti-spam)
+        # =========================================================
+        rl_ok, rl_wait = rate_limit_check(
+            key=_rl_key("forgot", ip, None),
+            max_count=FORGOT_RL_MAX,
+            window_seconds=FORGOT_RL_WINDOW_S,
+            block_seconds=FORGOT_RL_BLOCK_S
+        )
+        if not rl_ok:
+            show_support = True
+            flash(f"Demasiadas solicitudes. Espera {rl_wait} segundos o contacta soporte.", "error")
+            return render_template("forgot_password.html", show_support=show_support)
+        # =========================================================
+
+        ok_ip, wait_ip, blocked_ip = can_send_reset_ip(ip)
+        if not ok_ip:
+            log_event("RESET_BLOCKED", email=email, ip=ip, reason="ip_limit", wait_s=wait_ip)
+            show_support = True
+            flash("Demasiadas solicitudes desde tu red. Intenta más tarde o contacta soporte técnico.", "error")
+            return render_template("forgot_password.html", show_support=show_support)
+
         if not ok:
+            reason = "cooldown" if wait > 0 else "max_attempts"
+            log_event("RESET_BLOCKED", email=email, ip=ip, reason=reason, wait_s=wait)
+
             if wait > 0:
                 flash(f"Espera {wait} segundos para volver a enviar el enlace.", "error")
             else:
                 flash("Se alcanzó el máximo de intentos. Contacta soporte técnico.", "error")
             return render_template("forgot_password.html", show_support=show_support)
 
-        # Importante: por seguridad, aunque el user NO exista, mostramos el mismo mensaje.
         if user:
             token = serializer.dumps(email, salt="reset-password")
             link = url_for('reset_password', token=token, _external=True)
 
+            log_event("RESET_SEND_ATTEMPT", email=email, ip=ip, user_id=user.id)
             sent = send_reset_link(email=user.email, name=user.name, link=link)
             if sent:
+                log_event("RESET_SENT", email=email, ip=ip, user_id=user.id)
                 register_reset_sent(email)
+                register_reset_ip_sent(ip)
+            else:
+                log_event("RESET_SEND_FAIL", email=email, ip=ip, user_id=user.id)
 
         flash("Si el correo existe, te enviamos un enlace para recuperar tu contraseña. Revisa bandeja y spam.", "success")
         return render_template("forgot_password.html", show_support=show_support)
@@ -697,7 +1126,8 @@ def home(chat_id=None):
     chat_activo = None
 
     if chat_id:
-        chat_activo = Conversation.query.get(chat_id)
+        # FIX: SQLAlchemy 2.0 reemplaza Query.get() por session.get()
+        chat_activo = db.session.get(Conversation, chat_id)
         if chat_activo and chat_activo.user_id == current_user.id:
             mensajes_actuales = Message.query.filter_by(conversation_id=chat_id).order_by(Message.timestamp).all()
         else:
@@ -725,7 +1155,8 @@ def new_chat():
 @app.route('/delete_chat/<int:chat_id>', methods=['POST'])
 @login_required
 def delete_chat(chat_id):
-    chat = Conversation.query.get(chat_id)
+    # FIX: SQLAlchemy 2.0 reemplaza Query.get() por session.get()
+    chat = db.session.get(Conversation, chat_id)
     if chat and chat.user_id == current_user.id:
         db.session.delete(chat)
         db.session.commit()
@@ -736,10 +1167,45 @@ def delete_chat(chat_id):
 @app.route('/chat', methods=['POST'])
 @login_required
 def chat():
-    global chat_session
-    configurar_gemini_random()
+    # ✅ Configura key por request y valida
+    api_key_used = configurar_gemini_random()
+    if not api_key_used:
+        print("❌ ERROR: GEMINI_KEYS vacío o no cargado")
+        return jsonify({'response': "No hay API Key configurada para Gemini. Revisa GEMINI_KEYS."}), 500
+
+    # ✅ Crear modelo y chat_session LOCAL (NO global)
+    model = genai.GenerativeModel(
+        model_name='gemini-flash-latest',
+        generation_config=configuracion,
+        system_instruction=instruccion_sistema
+    )
+    chat_session = model.start_chat(history=[])
+
+    # =========================================================
+    # Fase 2 — Paso 2.6: Rate limit para /chat (protege costos)
+    # =========================================================
+    ip = get_client_ip()
+    uid = current_user.id if current_user.is_authenticated else 0
+    
+    rl_ok, rl_wait = rate_limit_check(
+        key=_rl_key("chat", ip, uid),
+        max_count=CHAT_RL_MAX,
+        window_seconds=CHAT_RL_WINDOW_S,
+        block_seconds=CHAT_RL_BLOCK_S
+    )
+    if not rl_ok:
+        return jsonify({'response': f"Demasiados mensajes. Espera {rl_wait} segundos e intenta de nuevo."}), 429
+    # =========================================================
 
     mensaje_usuario = request.form.get('message', '')
+
+    # =========================================================
+    # Fase 2 — Paso 2.6: Límite de caracteres en texto
+    # =========================================================
+    if mensaje_usuario and len(mensaje_usuario) > CHAT_MAX_TEXT_CHARS:
+        return jsonify({'response': f"Tu mensaje es muy largo. Máximo {CHAT_MAX_TEXT_CHARS} caracteres."}), 400
+    # =========================================================
+
     chat_id = request.form.get('chat_id')
     imagen_archivo = request.files.get('image')
 
@@ -761,6 +1227,14 @@ def chat():
 
         if imagen_archivo:
             img_bytes = imagen_archivo.read()
+
+            # =========================================================
+            # Fase 2 — Paso 2.6: Límite de tamaño en imágenes
+            # =========================================================
+            if len(img_bytes) > CHAT_MAX_IMAGE_BYTES:
+                return jsonify({'response': "La imagen es demasiado grande. Máximo 8MB."}), 400
+            # =========================================================
+            
             imagen_archivo.stream.seek(0)
             img_pil = Image.open(BytesIO(img_bytes))
 
@@ -776,7 +1250,7 @@ def chat():
                 ext = os.path.splitext(filename)[1].lower()
                 if ext not in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
                     ext = '.png'
-                unique_name = f"{current_user.id}_{chat_id}_{int(datetime.utcnow().timestamp())}_{random.randint(1000,9999)}{ext}"
+                unique_name = f"{current_user.id}_{chat_id}_{int(datetime.now(timezone.utc).timestamp())}_{random.randint(1000,9999)}{ext}"  # FIX: evitar datetime.utcnow() (deprecated)
                 image_path = os.path.join(UPLOAD_DIR, unique_name)
                 with open(image_path, "wb") as f:
                     f.write(img_bytes)
@@ -805,10 +1279,23 @@ def chat():
         else:
             contenido_a_enviar.append(f"(Usuario): {mensaje_usuario}")
 
+        t0 = time.time()
         response = chat_session.send_message(contenido_a_enviar)
+
+        latency_ms = int((time.time() - t0) * 1000)
+        log_event(
+            "CHAT_SENT",
+            user_id=current_user.id,
+            chat_id=chat_id,
+            has_image=bool(image_url),
+            text_len=len(mensaje_usuario or ""),
+            latency_ms=latency_ms
+        )
+
         texto_limpio = response.text.replace(r'\hline', '')
 
-        convo = Conversation.query.get(chat_id)
+        # FIX: SQLAlchemy 2.0 reemplaza Query.get() por session.get()
+        convo = db.session.get(Conversation, chat_id)
         new_title = None
         if convo and convo.title == "Nuevo Chat":
             titulo_base = mensaje_usuario if mensaje_usuario else "Imagen Analizada"
@@ -823,10 +1310,11 @@ def chat():
         return jsonify({'response': texto_limpio, 'chat_id': chat_id, 'new_title': new_title})
 
     except Exception as e:
-        chat_session = model.start_chat(history=[])
         print(f"❌ ERROR: {e}")
-        return jsonify({'response': "Tuve un problema técnico procesando eso. Intenta de nuevo."})
+        return jsonify({'response': "Tuve un problema técnico procesando eso. Intenta de nuevo."}), 200
 
+print("GEMINI_KEYS exist?:", bool(os.getenv("GEMINI_KEYS")))
+print("GEMINI_KEYS count:", len(LISTA_DE_CLAVES))
 
 # =========================================================
 # 15) RUN LOCAL
