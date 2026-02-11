@@ -1200,6 +1200,11 @@ def chat():
     mensaje_usuario = request.form.get('message', '')
 
     # =========================================================
+    # Fase 3 — Modo de estudio (Paso 4)
+    # =========================================================
+    study_mode = (request.form.get('study_mode', 'normal') or 'normal').strip().lower()
+
+    # =========================================================
     # Fase 2 — Paso 2.6: Límite de caracteres en texto
     # =========================================================
     if mensaje_usuario and len(mensaje_usuario) > CHAT_MAX_TEXT_CHARS:
@@ -1271,13 +1276,46 @@ def chat():
         db.session.add(msg_db)
         db.session.commit()
 
+        # =========================================================
+        # Fase 3 — Instrucciones según modo de estudio
+        # =========================================================
+        modo_instruccion = ""
+        if study_mode == "step":
+            modo_instruccion = (
+                "Responde como tutor académico. Explica paso a paso, sin saltarte pasos, "
+                "y al final haz 1 pregunta corta para confirmar si entendió."
+            )
+        elif study_mode == "hints":
+            modo_instruccion = (
+                "Da únicamente 2-3 pistas y una pregunta guía. No des la solución completa aún."
+            )
+        elif study_mode == "result":
+            modo_instruccion = (
+                "Da solo el resultado final y una explicación muy breve (1-2 líneas)."
+            )
+        # Si es "normal", modo_instruccion queda vacío ("")
+
+        # =========================================================
+        # Fase 3 — Construir contenido con modo de estudio
+        # =========================================================
         contenido_a_enviar = []
         if img_pil:
             contenido_a_enviar.append(img_pil)
             texto_prompt = mensaje_usuario if mensaje_usuario else "Analiza esta imagen y explica qué ves."
+            
+            # Aplicar modo de estudio si está activo
+            if modo_instruccion:
+                texto_prompt = f"{modo_instruccion}\n\nPregunta del estudiante: {texto_prompt}"
+            
             contenido_a_enviar.append(texto_prompt)
         else:
-            contenido_a_enviar.append(f"(Usuario): {mensaje_usuario}")
+            texto_final = mensaje_usuario
+            
+            # Aplicar modo de estudio si está activo
+            if modo_instruccion:
+                texto_final = f"{modo_instruccion}\n\nPregunta del estudiante: {mensaje_usuario}"
+            
+            contenido_a_enviar.append(f"(Usuario): {texto_final}")
 
         t0 = time.time()
         response = chat_session.send_message(contenido_a_enviar)

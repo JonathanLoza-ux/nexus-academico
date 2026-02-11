@@ -201,6 +201,7 @@ async function enviarMensaje() {
   const fd = new FormData();
   fd.append('message', textToSend);
   fd.append('chat_id', chatId);
+  fd.append('study_mode', document.getElementById('study-mode')?.value || 'normal');
   if (file) fd.append('image', file);
 
   if (file) quitarImagen();
@@ -520,3 +521,37 @@ document.addEventListener("keydown", (e) => {
     cerrarDeleteModal();
   }
 });
+
+// ✅ Panel de modos con botón "+"
+document.addEventListener("DOMContentLoaded", () => {
+  const wrap = document.getElementById("modePlus");
+  const btn = document.getElementById("modePlusBtn");
+  const panel = document.getElementById("modePlusPanel");
+  const hidden = document.getElementById("study-mode");
+
+  if (!wrap || !btn || !panel || !hidden) return;
+
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    wrap.classList.toggle("open");
+  });
+
+  panel.querySelectorAll(".mode-plus-item").forEach(item => {
+    item.addEventListener("click", () => {
+      const v = item.dataset.value || "normal";
+      hidden.value = v;
+
+      panel.querySelectorAll(".mode-plus-item").forEach(x => x.classList.remove("active"));
+      item.classList.add("active");
+
+      wrap.classList.remove("open");
+    });
+  });
+
+  // cerrar al tocar afuera
+  document.addEventListener("click", () => wrap.classList.remove("open"));
+});
+
+function closeModePlus(){
+  document.getElementById("modePlus")?.classList.remove("open");
+}

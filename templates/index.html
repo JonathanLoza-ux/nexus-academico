@@ -122,17 +122,56 @@
                 </button>
             </div>
 
+            <!-- ✅ INPUT AREA CORREGIDO - SIN BOTÓN ATTACH, CON DIV CERRADO CORRECTAMENTE -->
             <div id="input-area">
                 <input type="hidden" id="current-chat-id" value="{{ active_chat.id if active_chat else '' }}">
-                
+
                 <input type="file" id="image-input" accept="image/*" style="display: none;" onchange="mostrarVistaPrevia()">
-                
-                <button class="attach-btn" onclick="document.getElementById('image-input').click()">
-                    <i class="fas fa-paperclip"></i>
-                </button>
+
+                <!-- ✅ BOTÓN + MODOS -->
+                <div class="mode-plus" id="modePlus">
+                    <button type="button" class="mode-plus-btn" id="modePlusBtn" title="Modo de respuesta">
+                        <i class="fas fa-plus"></i>
+                    </button>
+
+                    <div class="mode-plus-panel" id="modePlusPanel">
+                        <div class="mode-plus-title">Modo de respuesta</div>
+
+                        <button type="button" class="mode-plus-action"
+                            onclick="closeModePlus(); document.getElementById('image-input').click()">
+                            <i class="fas fa-paperclip"></i>
+                            <span>Adjuntar imagen</span>
+                        </button>
+
+                        <div class="mode-plus-sep"></div>
+
+                        <button type="button" class="mode-plus-item active" data-value="normal">
+                            <span>Normal</span>
+                            <small>Respuesta estándar</small>
+                        </button>
+
+                        <button type="button" class="mode-plus-item" data-value="step">
+                            <span>Tutor paso a paso</span>
+                            <small>Explica con pasos</small>
+                        </button>
+
+                        <button type="button" class="mode-plus-item" data-value="hints">
+                            <span>Solo pistas</span>
+                            <small>Guía sin resolver todo</small>
+                        </button>
+
+                        <button type="button" class="mode-plus-item" data-value="result">
+                            <span>Solo resultado</span>
+                            <small>Respuesta corta</small>
+                        </button>
+                    </div>
+
+                    <!-- ✅ valor real para backend -->
+                    <input type="hidden" id="study-mode" value="normal">
+                </div>  <!-- ✅ ESTE CIERRE ES EL QUE FALTABA -->
 
                 <input type="text" id="user-input" placeholder="Escribe un mensaje..." autocomplete="off">
-                
+
                 <button class="send-btn" onclick="enviarMensaje()">
                     <i class="fas fa-paper-plane"></i>
                 </button>
@@ -242,32 +281,32 @@
     </div>
 
     <!-- ✅ MODAL: Confirmar eliminación de chat -->
-<div id="deleteModal" class="modal">
-    <div class="modal-content" style="max-width: 420px;">
-        <div class="modal-header">
-            <h2 style="margin:0;">🗑️ Eliminar conversación</h2>
-            <span class="close-modal" onclick="cerrarDeleteModal()">&times;</span>
-        </div>
+    <div id="deleteModal" class="modal">
+        <div class="modal-content" style="max-width: 420px;">
+            <div class="modal-header">
+                <h2 style="margin:0;">🗑️ Eliminar conversación</h2>
+                <span class="close-modal" onclick="cerrarDeleteModal()">&times;</span>
+            </div>
 
-        <div class="modal-body">
-            <p style="margin-top:0; color: var(--text-dim);">
-                ¿Estás seguro? Esta acción <b>no se puede deshacer</b>.
-            </p>
+            <div class="modal-body">
+                <p style="margin-top:0; color: var(--text-dim);">
+                    ¿Estás seguro? Esta acción <b>no se puede deshacer</b>.
+                </p>
 
-            <label class="confirm-check">
-                <input type="checkbox" id="deleteCheck">
-                Sí, estoy seguro de eliminarla.
-            </label>
-        </div>
+                <label class="confirm-check">
+                    <input type="checkbox" id="deleteCheck">
+                    Sí, estoy seguro de eliminarla.
+                </label>
+            </div>
 
-        <div class="confirm-actions">
-            <button class="btn-cancel" onclick="cerrarDeleteModal()">Cancelar</button>
-            <button class="btn-danger" id="btnDeleteConfirm" disabled onclick="confirmarEliminarChat()">
-                Eliminar
-            </button>
+            <div class="confirm-actions">
+                <button class="btn-cancel" onclick="cerrarDeleteModal()">Cancelar</button>
+                <button class="btn-danger" id="btnDeleteConfirm" disabled onclick="confirmarEliminarChat()">
+                    Eliminar
+                </button>
+            </div>
         </div>
     </div>
-</div>
 
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>

@@ -139,13 +139,17 @@ body {
 
 /* INPUT */
 #input-area { padding: 15px; border-top: 1px solid var(--border); display: flex; gap: 10px; background: var(--bg-dark); position: relative; align-items: flex-end;}
+
+/* ✅ Arreglo #2: permite que input se encoja en flex/grid */
+#user-input{
+  min-width: 0;
+  box-sizing: border-box;
+}
 #user-input { flex: 1; padding: 12px 20px; border-radius: 24px; background: var(--bg-sidebar); border: 1px solid var(--border); color: var(--text-main); outline: none; }
-.send-btn, .attach-btn { width: 45px; height: 45px; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 1.2rem; }
-.send-btn, .attach-btn { transition: color 0.15s ease, filter 0.15s ease, transform 0.15s ease; }
+
+.send-btn { width: 45px; height: 45px; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 1.2rem; transition: color 0.15s ease, filter 0.15s ease, transform 0.15s ease; }
 .send-btn { background: var(--accent); color: black; }
-.attach-btn { background: transparent; color: var(--text-dim); }
 .send-btn:hover { filter: brightness(1.05); transform: translateY(-1px); }
-.attach-btn:hover { color: var(--accent); transform: translateY(-1px); }
 
 /* VISTA PREVIA IMAGEN */
 #image-preview-container {
@@ -508,4 +512,133 @@ body {
 @keyframes fadeOut {
   from { opacity: 1; transform: translateY(0); }
   to   { opacity: 0; transform: translateY(-6px); }
+}
+
+/* =========================
+   ✅ MODE PLUS (responsive)
+========================= */
+.mode-plus{
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.mode-plus-btn{
+  width: 45px;
+  height: 45px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-sidebar);
+  color: var(--text-main);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: 0.15s ease;
+}
+.mode-plus-btn:hover{
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Panel: abre hacia arriba y NO se sale */
+.mode-plus-panel{
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  width: min(260px, 88vw);     /* ✅ nunca más ancho que pantalla */
+  max-height: 55vh;            /* ✅ si es grande, scrollea */
+  overflow: auto;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 14px 40px rgba(0,0,0,0.55);
+  padding: 10px;
+  display: none;
+  z-index: 6000;
+}
+
+.mode-plus.open .mode-plus-panel{ display: block; }
+
+.mode-plus-title{
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--text-main);
+  margin: 2px 6px 10px 6px;
+}
+
+.mode-plus-item{
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: rgba(255,255,255,0.03);
+  color: var(--text-main);
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: 0.15s ease;
+}
+.mode-plus-item span{ display:block; font-weight:800; font-size:14px; }
+.mode-plus-item small{ display:block; font-size:12px; opacity:0.75; margin-top:2px; }
+
+.mode-plus-item:hover{
+  border-color: var(--accent);
+  background: rgba(255,255,255,0.06);
+}
+.mode-plus-item.active{
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(6,182,212,0.12);
+}
+
+/* ✅ Acción dentro del panel (+) */
+.mode-plus-action{
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.03);
+  color: var(--text-main);
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: 0.15s ease;
+  margin: 6px 0 8px;
+}
+.mode-plus-action:hover{
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255,255,255,0.06);
+}
+.mode-plus-action i{ width: 18px; text-align: center; }
+
+.mode-plus-sep{
+  height: 1px;
+  background: rgba(255,255,255,0.08);
+  margin: 8px 4px 10px;
+  border-radius: 99px;
+}
+
+/* ✅ MÓVIL: + | input | enviar (SOLO ESTE MEDIA QUERY) */
+@media (max-width: 520px){
+  #input-area{
+    display: grid;
+    grid-template-columns: 45px 1fr 45px; /* + | input | enviar */
+    gap: 10px;
+    align-items: center;
+    padding: 12px;
+  }
+
+  #user-input{
+    width: 100%;
+    min-width: 0;
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+
+  .mode-plus-btn, .send-btn{
+    width: 45px;
+    height: 45px;
+  }
 }
