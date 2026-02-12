@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Conversacion compartida - Nexus</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/nexus-brain.svg') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] } };</script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body.shared-page {
+            overflow: hidden;
+        }
+        .shared-layout {
+            min-height: 100dvh;
+            background:
+                radial-gradient(950px 420px at 110% -10%, rgba(6,182,212,0.16), transparent 60%),
+                radial-gradient(780px 400px at -10% 110%, rgba(14,165,233,0.13), transparent 55%),
+                var(--bg-dark);
+        }
+        .shared-sidebar {
+            width: 264px;
+            transition: margin-left 0.28s ease, transform 0.28s ease;
+        }
+        .shared-sidebar.closed {
+            margin-left: -265px;
+        }
+        .shared-panel {
+            padding: 0 14px 16px;
+        }
+        .shared-panel .section-title {
+            margin: 16px 2px 10px;
+            letter-spacing: 0.2px;
+        }
+        .shared-card {
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: rgba(255,255,255,0.02);
+            padding: 14px;
+            margin-bottom: 14px;
+        }
+        .shared-chat-name {
+            margin: 0 0 10px;
+            font-size: 1.04rem;
+            line-height: 1.35;
+        }
+        .shared-meta-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .shared-meta-pill {
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            color: var(--text-dim);
+            background: rgba(255,255,255,0.02);
+            font-size: 0.78rem;
+            padding: 5px 10px;
+        }
+        .shared-tools {
+            display: grid;
+            gap: 10px;
+        }
+        .shared-tool-btn {
+            width: 100%;
+            text-align: left;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: rgba(255,255,255,0.03);
+            color: var(--text-main);
+            padding: 10px 12px;
+            cursor: pointer;
+            transition: 0.15s ease;
+            font-weight: 700;
+        }
+        .shared-tool-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(255,255,255,0.06);
+        }
+        .shared-tool-btn i {
+            width: 18px;
+            text-align: center;
+            margin-right: 6px;
+        }
+        .shared-note {
+            margin: 0;
+            color: var(--text-dim);
+            font-size: 0.78rem;
+            line-height: 1.4;
+            text-align: center;
+        }
+        .shared-chat-area {
+            min-width: 0;
+            position: relative;
+        }
+        #shared-chat-box {
+            flex: 1;
+            min-height: 0;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .shared-chat-area #input-area {
+            padding: 12px 14px;
+            border-top: 1px solid var(--border);
+            background: linear-gradient(180deg, rgba(15,23,42,0.95), rgba(15,23,42,0.8));
+        }
+        #sharedInput {
+            flex: 1;
+            min-width: 0;
+            box-sizing: border-box;
+            padding: 12px 16px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--bg-sidebar);
+            color: var(--text-main);
+            outline: none;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+        #sharedInput::placeholder {
+            color: var(--text-dim);
+        }
+        #sharedInput:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(6,182,212,0.14);
+        }
+        #sharedModePlus .mode-plus-panel {
+            display: block !important;
+            opacity: 0;
+            transform: translateY(10px) scale(0.98);
+            pointer-events: none;
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+        #sharedModePlus.open .mode-plus-panel {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            pointer-events: auto;
+        }
+        .shared-image-preview {
+            position: absolute;
+            bottom: 80px;
+            left: 15px;
+            background: var(--bg-sidebar);
+            padding: 8px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            z-index: 60;
+        }
+        .shared-image-preview img {
+            height: 60px;
+            border-radius: 6px;
+            display: block;
+        }
+        .shared-preview-close {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: var(--danger);
+            color: #fff;
+            border: none;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        .shared-readonly-bar {
+            border-top: 1px solid var(--border);
+            padding: 11px 14px;
+            text-align: center;
+            color: var(--text-dim);
+            background: rgba(15,23,42,0.72);
+            font-size: 0.84rem;
+        }
+        .shared-mode-help {
+            color: var(--text-dim);
+            font-size: 0.78rem;
+            margin-left: 6px;
+        }
+        .shared-layout .sidebar-footer {
+            gap: 6px;
+        }
+        .shared-layout #overlay {
+            opacity: 0;
+            transition: opacity 0.22s ease;
+        }
+        .shared-layout #overlay.active {
+            opacity: 1;
+        }
+
+        @media (max-width: 768px) {
+            .shared-sidebar {
+                width: min(80vw, 290px);
+                left: 0;
+                transform: translateX(-105%);
+                box-shadow: 0 14px 34px rgba(0,0,0,0.42);
+            }
+            .shared-sidebar.active {
+                transform: translateX(0);
+            }
+            #shared-chat-box {
+                padding: 14px;
+                gap: 14px;
+            }
+            .shared-card {
+                padding: 11px;
+            }
+            .shared-chat-name {
+                font-size: 1rem;
+            }
+            .shared-chat-area #input-area {
+                display: grid;
+                grid-template-columns: 45px 1fr 45px;
+                gap: 10px;
+                align-items: center;
+            }
+        }
+
+        @media print {
+            .sidebar,
+            .chat-header,
+            #input-area,
+            .shared-readonly-bar,
+            .msg-actions,
+            #overlay,
+            #toast {
+                display: none !important;
+            }
+            #shared-chat-box {
+                padding: 0;
+            }
+            .message {
+                max-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body class="shared-page">
+    <script id="shared-state" type="application/json">{{ {'share_token': share_token, 'permissions': permissions, 'chat_title': (chat_title or 'Conversacion compartida')} | tojson }}</script>
+
+    <div class="app-container shared-layout">
+        <aside class="sidebar shared-sidebar">
+            <div class="sidebar-header">
+                <div class="brand-container">
+                    <i class="fas fa-brain logo-icon"></i>
+                    <h2>NEXUS</h2>
+                </div>
+            </div>
+
+            <div class="conversations-list shared-panel">
+                <p class="section-title">COMPARTIDO</p>
+                <div class="shared-card">
+                    <h3 class="shared-chat-name">{{ chat_title or 'Conversacion compartida' }}</h3>
+                    <div class="shared-meta-pills">
+                        <span class="shared-meta-pill">Compartio: {{ owner_name }}</span>
+                        <span class="shared-meta-pill">Tu usuario: {{ viewer_name }}</span>
+                        <span class="shared-meta-pill">Activos: <span id="viewerCount">{{ viewer_count }}</span></span>
+                        <span class="shared-meta-pill">{% if permissions.read_only %}Solo lectura{% else %}Colaboracion habilitada{% endif %}</span>
+                    </div>
+                </div>
+
+                <p class="section-title">HERRAMIENTAS</p>
+                <div class="shared-tools">
+                    {% if permissions.allow_export %}
+                    <button type="button" class="shared-tool-btn" id="btnExportPdf"><i class="fas fa-file-pdf"></i> Exportar PDF</button>
+                    <button type="button" class="shared-tool-btn" id="btnExportMd"><i class="fas fa-file-lines"></i> Exportar Markdown</button>
+                    {% endif %}
+                    {% if permissions.allow_copy %}
+                    <button type="button" class="shared-tool-btn" id="btnCopyAll"><i class="fas fa-copy"></i> Copiar todo</button>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <p class="shared-note">
+                    Enlace publico de Nexus.
+                    {% if permissions.read_only %}
+                    No permite envio de mensajes.
+                    {% else %}
+                    Permite colaboracion segun los permisos configurados.
+                    {% endif %}
+                </p>
+            </div>
+        </aside>
+
+        <main class="chat-area shared-chat-area">
+            <header class="chat-header">
+                <button id="menu-btn" type="button" onclick="toggleSharedSidebar()">
+                    <i class="fas fa-bars"></i>
+                </button>
+
+                <h3 class="app-title">Conversacion Compartida</h3>
+
+                <div class="user-profile-area">
+                    <div class="profile-pic-placeholder">
+                        {{ (viewer_name[:1] if viewer_name else 'U') | upper }}
+                    </div>
+                </div>
+            </header>
+
+            <div id="shared-chat-box">
+                {% for msg in chat_history %}
+                <div class="message {{ msg.sender }}-msg" data-message-id="{{ msg.id }}">
+                    <div class="msg-content">
+                        <span class="history-content" style="display:none;">{{ msg.content }}</span>
+                        <div class="rendered-text">Cargando...</div>
+                    </div>
+                    {% if msg.sender == 'bot' %}
+                    <div class="msg-actions">
+                        {% if permissions.allow_copy %}
+                        <button class="msg-action-btn" data-action="copy"><i class="fas fa-copy"></i> Copiar</button>
+                        {% endif %}
+                        {% if permissions.allow_regenerate %}
+                        <button class="msg-action-btn" data-action="regen"><i class="fas fa-rotate-right"></i> Regenerar</button>
+                        {% endif %}
+                        {% if permissions.allow_feedback %}
+                        <button class="msg-action-btn ghost" data-action="up"><i class="fas fa-thumbs-up"></i></button>
+                        <button class="msg-action-btn ghost" data-action="down"><i class="fas fa-thumbs-down"></i></button>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+
+            <div id="loading-indicator" class="typing-indicator hidden" aria-live="polite">
+                <div class="typing-bubble">
+                    <div class="typing-avatar">N</div>
+                    <div class="typing-dots" aria-hidden="true">
+                        <span></span><span></span><span></span>
+                    </div>
+                    <div class="typing-text">Nexus está escribiendo</div>
+                </div>
+            </div>
+
+            {% if (not permissions.read_only) and permissions.allow_edit %}
+            <div id="sharedImagePreviewContainer" class="shared-image-preview hidden">
+                <img id="sharedImagePreview" src="" alt="Vista previa">
+                <button class="shared-preview-close" type="button" onclick="clearSharedImage()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <div id="input-area">
+                <input type="file" id="sharedImageInput" accept="image/*" style="display:none;">
+
+                <div class="mode-plus" id="sharedModePlus">
+                    <button type="button" class="mode-plus-btn" id="sharedModePlusBtn" title="Modo de respuesta">
+                        <i class="fas fa-plus"></i>
+                    </button>
+
+                    <div class="mode-plus-panel" id="sharedModePlusPanel">
+                        <div class="mode-plus-title">Modo de respuesta</div>
+
+                        <button type="button" class="mode-plus-action" id="sharedAttachAction">
+                            <i class="fas fa-paperclip"></i>
+                            <span>Adjuntar imagen</span>
+                        </button>
+
+                        <div class="mode-plus-sep"></div>
+
+                        <button type="button" class="mode-plus-item active" data-value="normal">
+                            <span>Normal</span>
+                            <small>Respuesta estandar</small>
+                        </button>
+                        <button type="button" class="mode-plus-item" data-value="step">
+                            <span>Tutor paso a paso</span>
+                            <small>Explica con pasos</small>
+                        </button>
+                        <button type="button" class="mode-plus-item" data-value="hints">
+                            <span>Solo pistas</span>
+                            <small>Guia sin resolver todo</small>
+                        </button>
+                        <button type="button" class="mode-plus-item" data-value="result">
+                            <span>Solo resultado</span>
+                            <small>Respuesta corta</small>
+                        </button>
+                    </div>
+
+                    <input type="hidden" id="sharedStudyMode" value="normal">
+                </div>
+
+                <input type="text" id="sharedInput" placeholder="Escribe un mensaje...">
+
+                <button class="send-btn" id="btnSharedSend" type="button">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+            {% else %}
+            <div class="shared-readonly-bar">
+                Solo lectura habilitada para este enlace.
+            </div>
+            {% endif %}
+        </main>
+
+        <div id="overlay" onclick="closeSharedSidebar()"></div>
+    </div>
+
+    <div id="toast" class="toast hidden">
+        <i class="fa-solid fa-circle-check"></i>
+        <span id="toastText">Listo</span>
+    </div>
+
+    <script>
+      (function () {
+        var stateEl = document.getElementById("shared-state");
+        var state = {};
+        try {
+          state = JSON.parse(stateEl ? stateEl.textContent : "{}");
+        } catch (e) {
+          state = {};
+        }
+
+        var SHARE_TOKEN = String(state.share_token || "");
+        var PERM = state.permissions || {};
+        var CHAT_TITLE = String(state.chat_title || "Conversacion compartida");
+        var exportCache = null;
+
+        if (window.marked) {
+          marked.setOptions({ gfm: true, breaks: true });
+        }
+
+        function safeTypeset(target) {
+          if (window.MathJax && typeof window.MathJax.typesetPromise === "function") {
+            return window.MathJax.typesetPromise([target]).catch(function () {});
+          }
+          return Promise.resolve();
+        }
+
+        function setSharedResponding(state) {
+          document.body.classList.toggle("is-responding", !!state);
+          var input = document.getElementById("sharedInput");
+          var sendBtn = document.getElementById("btnSharedSend");
+          var plusBtn = document.getElementById("sharedModePlusBtn");
+          var imageInput = document.getElementById("sharedImageInput");
+          if (input) input.disabled = !!state;
+          if (sendBtn) sendBtn.disabled = !!state;
+          if (plusBtn) plusBtn.disabled = !!state;
+          if (imageInput) imageInput.disabled = !!state;
+        }
+
+        function showToast(text, ms) {
+          var timeout = typeof ms === "number" ? ms : 1800;
+          var toast = document.getElementById("toast");
+          var textEl = document.getElementById("toastText");
+          if (!toast || !textEl) return;
+          textEl.textContent = text;
+          toast.classList.remove("hidden");
+          setTimeout(function () { toast.classList.add("hidden"); }, timeout);
+        }
+
+        function invalidateExportCache() {
+          exportCache = null;
+        }
+
+        function getRaw(messageEl) {
+          if (!messageEl) return "";
+          var hidden = messageEl.querySelector(".history-content");
+          if (hidden && hidden.textContent) return hidden.textContent;
+          return messageEl.dataset.raw || "";
+        }
+
+        function ensureRendered(messageEl) {
+          var msgContent = messageEl.querySelector(".msg-content") || messageEl;
+          var rendered = msgContent.querySelector(".rendered-text");
+          if (!rendered) {
+            rendered = document.createElement("div");
+            rendered.className = "rendered-text";
+            msgContent.appendChild(rendered);
+          }
+          return rendered;
+        }
+
+        function renderHistory() {
+          var rows = document.querySelectorAll("#shared-chat-box .message");
+          rows.forEach(function (m) {
+            var target = ensureRendered(m);
+            var raw = getRaw(m);
+            m.dataset.raw = raw;
+            target.innerHTML = window.marked ? marked.parse(raw) : raw;
+            safeTypeset(target);
+          });
+        }
+
+        function scrollBottom() {
+          var box = document.getElementById("shared-chat-box");
+          if (box) box.scrollTop = box.scrollHeight;
+        }
+
+        function typeWriterShared(el, txt, i, doneCb) {
+          if (!window.marked) {
+            el.textContent = txt;
+            if (doneCb) doneCb();
+            return;
+          }
+          var step = 6;
+          if (i < txt.length) {
+            el.innerHTML = marked.parse(txt.substring(0, i + step));
+            scrollBottom();
+            setTimeout(function () {
+              typeWriterShared(el, txt, i + step, doneCb);
+            }, 5);
+          } else {
+            el.innerHTML = marked.parse(txt);
+            safeTypeset(el).then(function () {
+              scrollBottom();
+              if (doneCb) doneCb();
+            });
+          }
+        }
+
+        async function copyToClipboard(text) {
+          if (!text) return;
+          try {
+            await navigator.clipboard.writeText(text);
+            showToast("Copiado");
+          } catch (e) {
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            ta.remove();
+            showToast("Copiado");
+          }
+        }
+
+        function addMessage(role, raw, messageId) {
+          var box = document.getElementById("shared-chat-box");
+          if (!box) return null;
+
+          var wrap = document.createElement("div");
+          wrap.className = "message " + role + "-msg";
+          if (messageId) wrap.dataset.messageId = String(messageId);
+          wrap.dataset.raw = raw || "";
+
+          var content = document.createElement("div");
+          content.className = "msg-content";
+          var rendered = document.createElement("div");
+          rendered.className = "rendered-text";
+          content.appendChild(rendered);
+          wrap.appendChild(content);
+
+          if (role === "bot") {
+            var actions = document.createElement("div");
+            actions.className = "msg-actions";
+            if (PERM.allow_copy) actions.innerHTML += '<button class="msg-action-btn" data-action="copy"><i class="fas fa-copy"></i> Copiar</button>';
+            if (PERM.allow_regenerate) actions.innerHTML += '<button class="msg-action-btn" data-action="regen"><i class="fas fa-rotate-right"></i> Regenerar</button>';
+            if (PERM.allow_feedback) actions.innerHTML += '<button class="msg-action-btn ghost" data-action="up"><i class="fas fa-thumbs-up"></i></button><button class="msg-action-btn ghost" data-action="down"><i class="fas fa-thumbs-down"></i></button>';
+            wrap.appendChild(actions);
+          }
+
+          box.appendChild(wrap);
+          invalidateExportCache();
+          renderHistory();
+          scrollBottom();
+          return wrap;
+        }
+
+        function getStudyMode() {
+          var modeEl = document.getElementById("sharedStudyMode");
+          return modeEl ? modeEl.value : "normal";
+        }
+
+        function clearSharedImage() {
+          var input = document.getElementById("sharedImageInput");
+          var previewWrap = document.getElementById("sharedImagePreviewContainer");
+          var preview = document.getElementById("sharedImagePreview");
+          if (input) input.value = "";
+          if (preview) preview.src = "";
+          if (previewWrap) previewWrap.classList.add("hidden");
+        }
+        window.clearSharedImage = clearSharedImage;
+
+        function onSharedImageSelected() {
+          var input = document.getElementById("sharedImageInput");
+          var previewWrap = document.getElementById("sharedImagePreviewContainer");
+          var preview = document.getElementById("sharedImagePreview");
+          if (!input || !previewWrap || !preview) return;
+          if (!input.files || !input.files.length) {
+            clearSharedImage();
+            return;
+          }
+          var reader = new FileReader();
+          reader.onload = function (e) {
+            preview.src = e.target.result;
+            previewWrap.classList.remove("hidden");
+          };
+          reader.readAsDataURL(input.files[0]);
+        }
+
+        async function sendSharedMessage() {
+          var input = document.getElementById("sharedInput");
+          var imageInput = document.getElementById("sharedImageInput");
+          var loader = document.getElementById("loading-indicator");
+          if (!input) return;
+
+          var text = (input.value || "").trim();
+          var file = imageInput && imageInput.files && imageInput.files.length ? imageInput.files[0] : null;
+          if (!text && !file) return;
+
+          setSharedResponding(true);
+          if (loader) loader.classList.remove("hidden");
+
+          var fd = new FormData();
+          fd.append("message", text);
+          fd.append("study_mode", getStudyMode());
+          if (file) fd.append("image", file);
+
+          var previewText = file ? (text ? (text + "\n\n[Imagen adjunta]") : "[Imagen adjunta]") : text;
+          if (previewText) addMessage("user", previewText, null);
+
+          input.value = "";
+          clearSharedImage();
+
+          try {
+            var res = await fetch("/shared_send/" + SHARE_TOKEN, { method: "POST", body: fd });
+            var data = await res.json();
+            if (!res.ok || !data.success) {
+              showToast(data.error || "No se pudo enviar");
+              return;
+            }
+            var botWrap = addMessage("bot", "", data.bot_message_id);
+            var rendered = ensureRendered(botWrap);
+            typeWriterShared(rendered, data.response || "", 0, function () {
+              botWrap.dataset.raw = data.response || "";
+              invalidateExportCache();
+            });
+          } catch (e) {
+            showToast("Error de conexion");
+          } finally {
+            if (loader) loader.classList.add("hidden");
+            setSharedResponding(false);
+          }
+        }
+
+        async function regenerateSharedBot(botEl) {
+          if (!PERM.allow_regenerate || !botEl) return;
+          var botId = Number(botEl.dataset.messageId || 0);
+          if (!botId) return;
+
+          var loader = document.getElementById("loading-indicator");
+          setSharedResponding(true);
+          if (loader) loader.classList.remove("hidden");
+
+          var rendered = ensureRendered(botEl);
+          rendered.innerHTML = "<em>Regenerando...</em>";
+
+          try {
+            var res = await fetch("/shared_regenerate/" + SHARE_TOKEN, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                bot_message_id: botId,
+                study_mode: getStudyMode()
+              })
+            });
+            var data = await res.json();
+            if (!res.ok || !data.success) {
+              showToast(data.error || "No se pudo regenerar");
+              return;
+            }
+            invalidateExportCache();
+            typeWriterShared(rendered, data.response || "", 0, function () {
+              botEl.dataset.raw = data.response || "";
+            });
+          } catch (e) {
+            showToast("Error al regenerar");
+          } finally {
+            if (loader) loader.classList.add("hidden");
+            setSharedResponding(false);
+          }
+        }
+
+        function collectConversationFromDom() {
+          var items = [];
+          var rows = document.querySelectorAll("#shared-chat-box .message");
+          rows.forEach(function (m) {
+            var sender = m.classList.contains("user-msg") ? "user" : "bot";
+            items.push({ sender: sender, content: getRaw(m) });
+          });
+          return items;
+        }
+
+        function estimateMarkdownTableColumns(mdText) {
+          var lines = String(mdText || "").split(/\r?\n/);
+          var maxCols = 0;
+          lines.forEach(function (line) {
+            if (line.indexOf("|") === -1) return;
+            var parts = line.split("|").map(function (x) { return x.trim(); });
+            if (parts.length < 3) return;
+            var cols = parts.filter(function (cell, idx) {
+              var first = idx === 0 && cell === "";
+              var last = idx === parts.length - 1 && cell === "";
+              return !first && !last;
+            }).length;
+            if (cols > maxCols) maxCols = cols;
+          });
+          return maxCols;
+        }
+
+        function shouldUseLandscape(messages) {
+          var maxCols = 0;
+          messages.forEach(function (m) {
+            var cols = estimateMarkdownTableColumns(m && m.content ? m.content : "");
+            if (cols > maxCols) maxCols = cols;
+          });
+          return maxCols >= 5;
+        }
+
+        function downloadTextFile(filename, content, mime) {
+          var blob = new Blob([content], { type: mime || "text/plain" });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement("a");
+          a.href = url;
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+
+        function getDomMessageCount() {
+          return document.querySelectorAll("#shared-chat-box .message").length;
+        }
+
+        async function fetchConversationForExport(forceRefresh) {
+          var force = !!forceRefresh;
+          var now = Date.now();
+          var domCount = getDomMessageCount();
+          if (!force && exportCache && (now - exportCache.at) < 45000 && exportCache.domCount === domCount) {
+            return exportCache.payload;
+          }
+
+          try {
+            var res = await fetch("/shared_export/" + SHARE_TOKEN, { method: "GET" });
+            var data = await res.json();
+            if (!res.ok || !data.success || !Array.isArray(data.messages)) {
+              throw new Error("export_fallback");
+            }
+            var payload = {
+              title: String(data.title || CHAT_TITLE),
+              messages: data.messages
+            };
+            exportCache = { at: now, domCount: domCount, payload: payload };
+            return payload;
+          } catch (e) {
+            var fallback = {
+              title: CHAT_TITLE,
+              messages: collectConversationFromDom()
+            };
+            exportCache = { at: now, domCount: domCount, payload: fallback };
+            return fallback;
+          }
+        }
+
+        async function exportMarkdown() {
+          showToast("Preparando Markdown...", 1200);
+          var payload = await fetchConversationForExport(false);
+          var date = new Date().toLocaleString("es-ES");
+          var md = "# " + payload.title + "\n\nFecha: " + date + "\n\n";
+          payload.messages.forEach(function (m) {
+            var role = m.sender === "user" ? "Usuario" : "Nexus";
+            var raw = String(m.content || "");
+            md += "## " + role + "\n\n" + raw + "\n\n";
+          });
+          downloadTextFile("Nexus_Compartido.md", md, "text/markdown");
+          showToast("Markdown exportado");
+        }
+
+        async function exportPdf() {
+          var w = window.open("", "_blank");
+          if (!w) {
+            showToast("No se pudo abrir el exportador (bloqueado por navegador)");
+            return;
+          }
+
+          w.document.open();
+          w.document.write('<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Preparando PDF...</title><style>body{font-family:Segoe UI,system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;height:100vh;margin:0} .card{border:1px solid #334155;border-radius:12px;padding:18px;background:#1e293b}</style></head><body><div class="card">Preparando PDF de la conversacion...</div></body></html>');
+          w.document.close();
+          showToast("Preparando PDF...", 1300);
+
+          var payload = await fetchConversationForExport(false);
+          var landscape = shouldUseLandscape(payload.messages || []);
+          var pageSize = landscape ? "A4 landscape" : "A4 portrait";
+          var date = new Date().toLocaleString("es-ES");
+          var blocks = payload.messages.map(function (m) {
+            var role = m.sender === "user" ? "Usuario" : "Nexus";
+            var cls = role === "Usuario" ? "user" : "bot";
+            var raw = String(m.content || "");
+            var html = window.marked ? marked.parse(raw) : raw;
+            return '<section class="msg ' + cls + '"><div class="role">' + role + '</div><div class="bubble">' + html + '</div></section>';
+          }).join("");
+
+          var htmlDoc = '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>' + payload.title + '</title>' +
+            '<script>window.MathJax={tex:{inlineMath:[[\'$\',\'$\'],[\'\\\\(\',\'\\\\)\']]}};<\/script>' +
+            '<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"><\/script>' +
+            '<style>' +
+            ':root{--bg:#f8fafc;--card:#ffffff;--text:#0f172a;--muted:#475569;--border:#dbe5f1;--accent:#0ea5e9;}*{box-sizing:border-box;}' +
+            'body{margin:0;padding:26px;background:var(--bg);font-family:Segoe UI,system-ui,sans-serif;color:var(--text);}' +
+            '.sheet{border:1px solid #d5e2ef;border-radius:16px;background:#fff;padding:18px;box-shadow:0 12px 28px rgba(15,23,42,0.08);}' +
+            '.brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}' +
+            '.brand .left{display:flex;align-items:center;gap:10px;color:#0284c7;font-weight:800;letter-spacing:0.2px;}' +
+            '.brand .mark{width:26px;height:26px;border-radius:999px;background:#e0f2fe;border:1px solid #bae6fd;display:grid;place-items:center;color:#0369a1;font-size:13px;}' +
+            'h1{margin:0 0 8px;font-size:1.45rem;}.meta{color:var(--muted);margin-bottom:14px;}' +
+            '.msg{margin:12px 0;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--card);page-break-inside:avoid;}' +
+            '.msg.user{border-left:4px solid #3b82f6;}.msg.bot{border-left:4px solid var(--accent);}' +
+            '.role{font-weight:700;margin-bottom:8px;color:var(--muted);}.bubble{line-height:1.55;}' +
+            '.bubble img{max-width:220px;max-height:170px;height:auto;border-radius:10px;display:block;}' +
+            '.bubble table{width:100%;border-collapse:collapse;table-layout:fixed;}' +
+            '.bubble th,.bubble td{border:1px solid var(--border);padding:8px 10px;text-align:left;white-space:normal;word-break:break-word;overflow-wrap:anywhere;vertical-align:top;}' +
+            '.bubble pre{white-space:pre-wrap;word-break:break-word;border:1px solid var(--border);border-radius:10px;padding:10px;background:#f1f5f9;overflow-x:auto;}' +
+            '.bubble mjx-container{max-width:100%!important;overflow-x:auto;overflow-y:hidden;display:block;}' +
+            '.pdf-watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-24deg);opacity:.08;font-size:48px;font-weight:800;color:#0f172a;pointer-events:none;white-space:nowrap;}' +
+            '.pdf-footer{position:fixed;bottom:8px;right:12px;font-size:11px;color:#64748b;}' +
+            '@media print{@page{size:' + pageSize + ';margin:10mm;}body{padding:0;}.sheet{border:none;box-shadow:none;border-radius:0;padding:0;}}' +
+            '<\/style></head><body><div class="pdf-watermark">© 2026 Jonathan Loza</div><div class="pdf-footer">© 2026 Jonathan Loza · Nexus Academy</div><main class="sheet"><div class="brand"><div class="left"><span class="mark">N</span> NEXUS ACADEMY</div><div style="color:#64748b;font-size:12px;">' + (landscape ? 'A4 Horizontal' : 'A4 Vertical') + '</div></div><h1>' + payload.title + '</h1><div class="meta">Exportado: ' + date + '</div>' + blocks + '</main>' +
+            '<script>(async function(){try{if(window.MathJax&&window.MathJax.typesetPromise){await window.MathJax.typesetPromise();}}catch(e){}window.focus();window.print();})();<\/script>' +
+            '</body></html>';
+
+          w.document.open();
+          w.document.write(htmlDoc);
+          w.document.close();
+        }
+
+        async function refreshPresence() {
+          try {
+            var res = await fetch("/shared_presence/" + SHARE_TOKEN, { method: "POST" });
+            var data = await res.json();
+            if (data && data.success && typeof data.count === "number") {
+              var countEl = document.getElementById("viewerCount");
+              if (countEl) countEl.textContent = String(data.count);
+            }
+          } catch (e) {}
+        }
+
+        function initModePlus() {
+          var wrap = document.getElementById("sharedModePlus");
+          var btn = document.getElementById("sharedModePlusBtn");
+          var panel = document.getElementById("sharedModePlusPanel");
+          var hidden = document.getElementById("sharedStudyMode");
+          var attachAction = document.getElementById("sharedAttachAction");
+          var imageInput = document.getElementById("sharedImageInput");
+          if (!wrap || !btn || !panel || !hidden) return;
+
+          btn.addEventListener("click", function (e) {
+            e.stopPropagation();
+            wrap.classList.toggle("open");
+          });
+
+          if (attachAction && imageInput) {
+            attachAction.addEventListener("click", function () {
+              wrap.classList.remove("open");
+              imageInput.click();
+            });
+          }
+
+          var items = panel.querySelectorAll(".mode-plus-item");
+          items.forEach(function (item) {
+            item.addEventListener("click", function () {
+              var value = item.dataset.value || "normal";
+              hidden.value = value;
+              items.forEach(function (x) { x.classList.remove("active"); });
+              item.classList.add("active");
+              wrap.classList.remove("open");
+            });
+          });
+
+          document.addEventListener("click", function () {
+            wrap.classList.remove("open");
+          });
+        }
+
+        window.toggleSharedSidebar = function () {
+          var sidebar = document.querySelector(".shared-sidebar");
+          var overlay = document.getElementById("overlay");
+          if (!sidebar) return;
+
+          if (window.innerWidth <= 768) {
+            sidebar.classList.toggle("active");
+            if (overlay) overlay.classList.toggle("active");
+            return;
+          }
+          sidebar.classList.toggle("closed");
+        };
+
+        window.closeSharedSidebar = function () {
+          var sidebar = document.querySelector(".shared-sidebar");
+          var overlay = document.getElementById("overlay");
+          if (!sidebar) return;
+          sidebar.classList.remove("active");
+          if (overlay) overlay.classList.remove("active");
+        };
+
+        document.addEventListener("click", async function (e) {
+          var actionBtn = e.target.closest(".msg-action-btn");
+          if (!actionBtn) return;
+          var msg = actionBtn.closest(".message");
+          if (!msg) return;
+
+          var action = actionBtn.dataset.action;
+          if (action === "copy") {
+            await copyToClipboard(getRaw(msg));
+            return;
+          }
+          if (action === "regen") {
+            await regenerateSharedBot(msg);
+            return;
+          }
+          if (action === "up") {
+            actionBtn.classList.toggle("active");
+            var down = actionBtn.closest(".msg-actions").querySelector('[data-action="down"]');
+            if (down) down.classList.remove("active");
+            showToast("Gracias por tu feedback");
+            return;
+          }
+          if (action === "down") {
+            actionBtn.classList.toggle("active");
+            var up = actionBtn.closest(".msg-actions").querySelector('[data-action="up"]');
+            if (up) up.classList.remove("active");
+            showToast("Gracias por tu feedback");
+          }
+        });
+
+        var btnExportMd = document.getElementById("btnExportMd");
+        if (btnExportMd) btnExportMd.addEventListener("click", exportMarkdown);
+
+        var btnExportPdf = document.getElementById("btnExportPdf");
+        if (btnExportPdf) btnExportPdf.addEventListener("click", exportPdf);
+
+        var btnCopyAll = document.getElementById("btnCopyAll");
+        if (btnCopyAll) {
+          btnCopyAll.addEventListener("click", async function () {
+            var payload = await fetchConversationForExport(false);
+            var all = payload.messages.map(function (x) {
+              var role = x.sender === "user" ? "Usuario" : "Nexus";
+              return role + "\n" + String(x.content || "");
+            }).join("\n\n");
+            await copyToClipboard(all);
+          });
+        }
+
+        var btnSend = document.getElementById("btnSharedSend");
+        if (btnSend) btnSend.addEventListener("click", sendSharedMessage);
+
+        var sharedInput = document.getElementById("sharedInput");
+        if (sharedInput) {
+          sharedInput.addEventListener("keypress", function (e) {
+            if (e.key === "Enter") sendSharedMessage();
+          });
+        }
+
+        var sharedImageInput = document.getElementById("sharedImageInput");
+        if (sharedImageInput) {
+          sharedImageInput.addEventListener("change", onSharedImageSelected);
+        }
+
+        renderHistory();
+        scrollBottom();
+        refreshPresence();
+        setInterval(refreshPresence, 25000);
+        initModePlus();
+      })();
+    </script>
+</body>
+</html>

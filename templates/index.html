@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Nexus - Asistente IA</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/nexus-brain.svg') }}">
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
@@ -40,14 +41,36 @@
                         <i class="far fa-comment-alt"></i>
                         <span>{{ chat.title }}</span>
                     </a>
-                    <button class="delete-chat-btn" onclick="borrarChat(event, {{ chat.id }})">
-                        <i class="fas fa-trash"></i>
-                    </button>
+                    <div class="chat-menu-wrap">
+                        <button type="button" class="chat-more-btn js-chat-more" data-chat-id="{{ chat.id }}" aria-label="Opciones de conversación">
+                            <i class="fas fa-ellipsis-vertical"></i>
+                        </button>
+                        <div class="chat-menu" id="chat-menu-{{ chat.id }}">
+                            <button type="button" class="js-rename-chat" data-chat-id="{{ chat.id }}">
+                                <i class="fas fa-pen"></i> Renombrar
+                            </button>
+                            <button type="button" class="js-export-chat" data-chat-id="{{ chat.id }}" data-format="pdf">
+                                <i class="fas fa-file-pdf"></i> Exportar PDF
+                            </button>
+                            <button type="button" class="js-export-chat" data-chat-id="{{ chat.id }}" data-format="md">
+                                <i class="fas fa-file-lines"></i> Exportar Markdown
+                            </button>
+                            <button type="button" class="js-share-chat" data-chat-id="{{ chat.id }}">
+                                <i class="fas fa-share-nodes"></i> Compartir
+                            </button>
+                            <button type="button" class="danger js-delete-chat" data-chat-id="{{ chat.id }}">
+                                <i class="fas fa-trash"></i> Eliminar
+                            </button>
+                        </div>
+                    </div>
                 </div>
                 {% endfor %}
             </div>
 
             <div class="sidebar-footer">
+                <button class="explore-btn" onclick="openSavedModal()">
+                    <i class="fas fa-bookmark"></i> Mis Guardados
+                </button>
                 <button class="explore-btn" onclick="toggleModal('subjectsModal')">
                     <i class="fas fa-compass"></i> Explorar Categorías
                 </button>
@@ -99,7 +122,7 @@
                 {% endif %}
 
                 {% for msg in chat_history %}
-                    <div class="message {{ msg.sender }}-msg">
+                    <div class="message {{ msg.sender }}-msg" data-message-id="{{ msg.id }}">
                         <div class="msg-content">
                             {% if msg.has_image %}
                             <div class="img-badge"><i class="fas fa-image"></i> Imagen enviada</div>
@@ -111,8 +134,14 @@
                 {% endfor %}
             </div>
 
-            <div id="loading-indicator" class="hidden">
-                <i class="fas fa-circle-notch fa-spin"></i> Nexus está pensando...
+            <div id="loading-indicator" class="typing-indicator hidden" aria-live="polite">
+                <div class="typing-bubble">
+                    <div class="typing-avatar">N</div>
+                    <div class="typing-dots" aria-hidden="true">
+                        <span></span><span></span><span></span>
+                    </div>
+                    <div class="typing-text">Nexus está escribiendo</div>
+                </div>
             </div>
 
             <div id="image-preview-container" class="hidden">
@@ -308,6 +337,96 @@
         </div>
     </div>
 
+    <div id="shareModal" class="modal">
+        <div class="modal-content" style="max-width: 520px;">
+            <div class="modal-header">
+                <h2 style="margin:0;">Compartir conversación</h2>
+                <span class="close-modal" onclick="closeModal('shareModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p style="margin-top:0; color: var(--text-dim);">Configura permisos y genera un enlace público.</p>
+
+                <label class="confirm-check">
+                    <input type="checkbox" id="permReadOnly" checked>
+                    Solo lectura (sin escribir ni editar)
+                </label>
+                <label class="confirm-check">
+                    <input type="checkbox" id="permAllowExport" checked>
+                    Permitir exportar (PDF / Markdown)
+                </label>
+                <label class="confirm-check">
+                    <input type="checkbox" id="permAllowCopy" checked>
+                    Permitir copiar contenido
+                </label>
+                <label class="confirm-check">
+                    <input type="checkbox" id="permAllowFeedback" checked>
+                    Permitir feedback
+                </label>
+                <label class="confirm-check">
+                    <input type="checkbox" id="permAllowRegenerate">
+                    Permitir regenerar respuestas
+                </label>
+                <label class="confirm-check">
+                    <input type="checkbox" id="permAllowEdit">
+                    Permitir editar y reenviar
+                </label>
+                <p style="margin:4px 0 0; color: var(--text-dim); font-size: 0.82rem;">
+                    Tip: al activar regenerar o editar, se desactiva automaticamente "Solo lectura".
+                </p>
+
+                <div style="display:flex; gap:10px; margin-top: 14px;">
+                    <input type="text" id="shareLinkOutput" readonly placeholder="Aquí aparecerá el enlace..." style="flex:1; padding:12px; border-radius:10px; border:1px solid var(--border); background: var(--bg-dark); color: var(--text-main);">
+                    <button type="button" class="btn-cancel" id="btnCopyShareLink">Copiar</button>
+                </div>
+            </div>
+            <div class="confirm-actions">
+                <button class="btn-cancel" onclick="closeModal('shareModal')">Cerrar</button>
+                <button class="explore-btn" id="btnGenerateShareLink" style="width:auto;">Generar enlace</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="renameModal" class="modal">
+        <div class="modal-content rename-modal-content">
+            <div class="modal-header">
+                <h2 style="margin:0;">Renombrar conversación</h2>
+                <span class="close-modal" onclick="closeRenameModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p style="margin-top:0; color: var(--text-dim);">Escribe un nuevo nombre para la conversación.</p>
+                <input
+                    type="text"
+                    id="renameChatInput"
+                    class="rename-chat-input"
+                    maxlength="100"
+                    placeholder="Nuevo nombre..."
+                >
+            </div>
+            <div class="confirm-actions">
+                <button class="btn-cancel" onclick="closeRenameModal()">Cancelar</button>
+                <button class="explore-btn" id="btnRenameConfirm" style="width:auto;" onclick="confirmRenameChat()">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="savedModal" class="modal">
+        <div class="modal-content" style="max-width: 760px;">
+            <div class="modal-header">
+                <h2 style="margin:0;">Mis guardados</h2>
+                <span class="close-modal" onclick="closeModal('savedModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="savedList"></div>
+            </div>
+            <div class="confirm-actions">
+                <button class="btn-cancel" onclick="clearSavedMessages()">Limpiar todo</button>
+                <button class="explore-btn" style="width:auto;" onclick="closeModal('savedModal')">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
 </html>
+
+

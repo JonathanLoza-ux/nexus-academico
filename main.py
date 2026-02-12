@@ -8,7 +8,7 @@ import logging
 import time
 import uuid
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session
+from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session, abort
 from dotenv import load_dotenv
 
 import google.generativeai as genai
@@ -314,6 +314,28 @@ class Message(db.Model):
     conversation_id = db.Column(db.Integer, db.ForeignKey('conversation.id'), nullable=False)
 
 
+class SharedConversation(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    token = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow_naive)
+    conversation_id = db.Column(db.Integer, db.ForeignKey('conversation.id'), nullable=False, index=True)
+    owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    read_only = db.Column(db.Boolean, default=True)
+    allow_export = db.Column(db.Boolean, default=True)
+    allow_copy = db.Column(db.Boolean, default=True)
+    allow_feedback = db.Column(db.Boolean, default=True)
+    allow_regenerate = db.Column(db.Boolean, default=False)
+    allow_edit = db.Column(db.Boolean, default=False)
+
+
+class SharedViewerPresence(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    token = db.Column(db.String(64), index=True, nullable=False)
+    email = db.Column(db.String(120), index=True, nullable=False)
+    name = db.Column(db.String(120), nullable=False)
+    last_seen = db.Column(db.DateTime, default=utcnow_naive, index=True)
+
+
 class ResetRequest(db.Model):
     """
     Controla intentos y cooldown para evitar spam de correos.
@@ -408,6 +430,7 @@ REGLAS:
 1. Usa Markdown para todo (tablas, negritas, listas).
 2. Si recibes una imagen, descríbela y ayuda con lo que contenga (matemáticas, texto, etc).
 3. Sé amable y directo.
+4. Entrega fórmulas limpias y legibles, sin símbolos basura ni escapes extraños.
 """
 configuracion = {"temperature": 0.7}
 
@@ -1010,7 +1033,10 @@ def register():
 @login_required
 def logout():
     logout_user()
-    session.clear()
+    # Mantener datos de enlaces compartidos activos en esta sesión del navegador.
+    # Solo limpiamos claves de autenticación principal.
+    for key in ["_user_id", "_fresh", "_id", "remember_token"]:
+        session.pop(key, None)
     return redirect(url_for('login_page'))
 
 
@@ -1164,16 +1190,111 @@ def delete_chat(chat_id):
     return jsonify({'success': False}), 403
 
 
-@app.route('/chat', methods=['POST'])
+@app.route('/rename_chat/<int:chat_id>', methods=['POST'])
 @login_required
-def chat():
-    # ✅ Configura key por request y valida
+def rename_chat(chat_id):
+    chat = db.session.get(Conversation, chat_id)
+    if not chat or chat.user_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Chat no autorizado'}), 403
+
+    payload = request.get_json(silent=True) or {}
+    title = (payload.get('title') or "").strip()
+    if not title:
+        return jsonify({'success': False, 'error': 'El título no puede ir vacío'}), 400
+
+    title = _sanitize_text_for_db(" ".join(title.split()))
+    if len(title) > 100:
+        title = title[:100].rstrip()
+    if not title:
+        return jsonify({'success': False, 'error': 'Título inválido'}), 400
+
+    chat.title = title
+    db.session.commit()
+    return jsonify({'success': True, 'title': chat.title, 'chat_id': chat.id})
+
+
+def _bool_flag(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _study_instruction(study_mode: str) -> str:
+    mode = (study_mode or "normal").strip().lower()
+    if mode == "step":
+        return (
+            "Responde como tutor académico. Explica paso a paso, sin saltarte pasos, "
+            "y al final haz 1 pregunta corta para confirmar si entendió."
+        )
+    if mode == "hints":
+        return "Da únicamente 2-3 pistas y una pregunta guía. No des la solución completa aún."
+    if mode == "result":
+        return "Da solo el resultado final y una explicación muy breve (1-2 líneas)."
+    return ""
+
+
+IMAGE_MD_RE = re.compile(r'!\[[^\]]*\]\(([^)]+)\)')
+
+
+def _sanitize_text_for_db(text: str) -> str:
+    if text is None:
+        return ""
+    clean = str(text).replace("\x00", "")
+    return "".join(ch for ch in clean if ord(ch) <= 0xFFFF)
+
+
+def _extract_image_url(md_content: str):
+    if not md_content:
+        return None
+    m = IMAGE_MD_RE.search(md_content)
+    return m.group(1).strip() if m else None
+
+
+def _load_image_from_message_content(md_content: str):
+    url = _extract_image_url(md_content or "")
+    if not url:
+        return None
+    try:
+        if url.startswith("/static/uploads/"):
+            local_path = os.path.join(app.root_path, url.lstrip("/").replace("/", os.sep))
+            if os.path.exists(local_path):
+                with open(local_path, "rb") as f:
+                    return Image.open(BytesIO(f.read()))
+            return None
+        if url.startswith("http://") or url.startswith("https://"):
+            r = requests.get(url, timeout=12)
+            if r.ok:
+                return Image.open(BytesIO(r.content))
+    except Exception:
+        return None
+    return None
+
+
+def _build_recent_context(conversation_id: int, limit: int = 8, max_message_id: int = None) -> str:
+    q = Message.query.filter_by(conversation_id=conversation_id)
+    if max_message_id is not None:
+        q = q.filter(Message.id <= max_message_id)
+
+    rows = q.order_by(Message.timestamp.desc(), Message.id.desc()).limit(limit).all()
+    rows.reverse()
+
+    lines = []
+    for row in rows:
+        role = "Usuario" if row.sender == "user" else "Nexus"
+        content = (row.content or "").strip()
+        if len(content) > 650:
+            content = content[:650] + "..."
+        lines.append(f"{role}: {content}")
+    return "\n".join(lines)
+
+
+def _generate_ai_response(*, conversation_id: int, question_text: str, study_mode: str = "normal", img_pil=None, max_message_id: int = None):
     api_key_used = configurar_gemini_random()
     if not api_key_used:
-        print("❌ ERROR: GEMINI_KEYS vacío o no cargado")
-        return jsonify({'response': "No hay API Key configurada para Gemini. Revisa GEMINI_KEYS."}), 500
+        raise RuntimeError("No hay API Key configurada para Gemini")
 
-    # ✅ Crear modelo y chat_session LOCAL (NO global)
     model = genai.GenerativeModel(
         model_name='gemini-flash-latest',
         generation_config=configuracion,
@@ -1181,6 +1302,581 @@ def chat():
     )
     chat_session = model.start_chat(history=[])
 
+    context_block = _build_recent_context(
+        conversation_id=conversation_id,
+        limit=8,
+        max_message_id=max_message_id
+    )
+    mode_block = _study_instruction(study_mode)
+
+    prompt = ""
+    if mode_block:
+        prompt += mode_block + "\n\n"
+    if context_block:
+        prompt += f"Contexto reciente de la conversacion:\n{context_block}\n\n"
+    prompt += f"Pregunta actual del estudiante:\n{question_text}"
+
+    payload = [img_pil, prompt] if img_pil is not None else [prompt]
+
+    t0 = time.time()
+    response = chat_session.send_message(payload)
+    latency_ms = int((time.time() - t0) * 1000)
+    text = _sanitize_text_for_db((response.text or "").replace(r'\hline', ''))
+    return text, latency_ms
+
+
+def _touch_shared_viewer(token: str, email: str, name: str):
+    row = SharedViewerPresence.query.filter_by(token=token, email=email).first()
+    now = utcnow_naive()
+    if not row:
+        row = SharedViewerPresence(token=token, email=email, name=name, last_seen=now)
+        db.session.add(row)
+    else:
+        row.name = name
+        row.last_seen = now
+    db.session.commit()
+
+    cutoff = now - timedelta(minutes=10)
+    stale = SharedViewerPresence.query.filter(
+        SharedViewerPresence.token == token,
+        SharedViewerPresence.last_seen < cutoff
+    ).all()
+    for item in stale:
+        db.session.delete(item)
+    db.session.commit()
+
+
+def _shared_viewer_count(token: str) -> int:
+    cutoff = utcnow_naive() - timedelta(minutes=3)
+    rows = SharedViewerPresence.query.filter(
+        SharedViewerPresence.token == token,
+        SharedViewerPresence.last_seen >= cutoff
+    ).all()
+    return len({r.email.lower() for r in rows})
+
+
+@app.route('/share_chat/<int:chat_id>', methods=['POST'])
+@login_required
+def share_chat(chat_id):
+    chat = db.session.get(Conversation, chat_id)
+    if not chat or chat.user_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Chat no encontrado'}), 404
+
+    payload = request.get_json(silent=True) or {}
+    permissions = payload.get('permissions') or {}
+
+    read_only = _bool_flag(permissions.get('read_only'), True)
+    allow_export = _bool_flag(permissions.get('allow_export'), True)
+    allow_copy = _bool_flag(permissions.get('allow_copy'), True)
+    allow_feedback = _bool_flag(permissions.get('allow_feedback'), True)
+    allow_regenerate = _bool_flag(permissions.get('allow_regenerate'), False) and (not read_only)
+    allow_edit = _bool_flag(permissions.get('allow_edit'), False) and (not read_only)
+
+    token = uuid.uuid4().hex + uuid.uuid4().hex[:8]
+    shared = SharedConversation(
+        token=token,
+        conversation_id=chat.id,
+        owner_id=current_user.id,
+        read_only=read_only,
+        allow_export=allow_export,
+        allow_copy=allow_copy,
+        allow_feedback=allow_feedback,
+        allow_regenerate=allow_regenerate,
+        allow_edit=allow_edit
+    )
+    db.session.add(shared)
+    db.session.commit()
+
+    share_url = url_for('shared_chat', token=token, _external=True)
+    return jsonify({
+        'success': True,
+        'share_url': share_url,
+        'permissions': {
+            'read_only': read_only,
+            'allow_export': allow_export,
+            'allow_copy': allow_copy,
+            'allow_feedback': allow_feedback,
+            'allow_regenerate': allow_regenerate,
+            'allow_edit': allow_edit
+        }
+    })
+
+
+@app.route('/shared/<token>', methods=['GET', 'POST'])
+def shared_chat(token):
+    shared = SharedConversation.query.filter_by(token=token).first()
+    if not shared:
+        abort(404)
+
+    chat = db.session.get(Conversation, shared.conversation_id)
+    if not chat:
+        abort(404)
+
+    session_email_key = f"shared_email_{token}"
+    session_name_key = f"shared_name_{token}"
+
+    if request.method == 'POST':
+        email = (request.form.get('email') or "").strip().lower()
+        if not EMAIL_RE.match(email):
+            return render_template('shared_access.html', token=token, error="Ingresa un correo valido.")
+
+        user = User.query.filter_by(email=email).first()
+        if user:
+            viewer_name = user.name
+        else:
+            local_part = email.split('@', 1)[0]
+            local_part = local_part.replace('.', ' ').replace('_', ' ').replace('-', ' ')
+            local_part = re.sub(r"\s+", " ", local_part).strip()
+            viewer_name = local_part.title() if local_part else "Invitado"
+
+        session[session_email_key] = email
+        session[session_name_key] = viewer_name
+        _touch_shared_viewer(token, email, viewer_name)
+        return redirect(url_for('shared_chat', token=token))
+
+    viewer_email = session.get(session_email_key)
+    viewer_name = session.get(session_name_key)
+    if not viewer_email or not viewer_name:
+        return render_template('shared_access.html', token=token, error=None)
+
+    _touch_shared_viewer(token, viewer_email, viewer_name)
+
+    chat_history = (
+        Message.query
+        .filter_by(conversation_id=chat.id)
+        .order_by(Message.timestamp)
+        .all()
+    )
+
+    permissions = {
+        'read_only': bool(shared.read_only),
+        'allow_export': bool(shared.allow_export),
+        'allow_copy': bool(shared.allow_copy),
+        'allow_feedback': bool(shared.allow_feedback),
+        'allow_regenerate': bool(shared.allow_regenerate),
+        'allow_edit': bool(shared.allow_edit),
+    }
+
+    return render_template(
+        'shared_chat.html',
+        chat_title=chat.title,
+        chat_history=chat_history,
+        permissions=permissions,
+        share_token=shared.token,
+        owner_name=chat.owner.name if chat.owner else "Usuario Nexus",
+        viewer_name=viewer_name,
+        viewer_count=_shared_viewer_count(token)
+    )
+
+
+@app.route('/shared_presence/<token>', methods=['POST'])
+def shared_presence(token):
+    shared = SharedConversation.query.filter_by(token=token).first()
+    if not shared:
+        return jsonify({'success': False}), 404
+
+    email = session.get(f"shared_email_{token}")
+    name = session.get(f"shared_name_{token}")
+    if email and name:
+        _touch_shared_viewer(token, email, name)
+    return jsonify({'success': True, 'count': _shared_viewer_count(token)})
+
+
+@app.route('/shared_export/<token>', methods=['GET'])
+def shared_export(token):
+    shared = SharedConversation.query.filter_by(token=token).first()
+    if not shared:
+        return jsonify({'success': False, 'error': 'Enlace no valido'}), 404
+    if not shared.allow_export:
+        return jsonify({'success': False, 'error': 'Este enlace no permite exportar'}), 403
+
+    viewer_email = session.get(f"shared_email_{token}")
+    viewer_name = session.get(f"shared_name_{token}")
+    if not viewer_email or not viewer_name:
+        return jsonify({'success': False, 'error': 'Debes validar correo para exportar'}), 401
+
+    chat = db.session.get(Conversation, shared.conversation_id)
+    if not chat:
+        return jsonify({'success': False, 'error': 'Chat no encontrado'}), 404
+
+    rows = (
+        Message.query
+        .filter_by(conversation_id=chat.id)
+        .order_by(Message.id.asc())
+        .all()
+    )
+
+    return jsonify({
+        'success': True,
+        'title': chat.title or 'Conversacion compartida',
+        'messages': [
+            {
+                'id': m.id,
+                'sender': m.sender,
+                'content': m.content or ''
+            }
+            for m in rows
+        ]
+    })
+
+
+@app.route('/shared_send/<token>', methods=['POST'])
+def shared_send(token):
+    shared = SharedConversation.query.filter_by(token=token).first()
+    if not shared:
+        return jsonify({'success': False, 'error': 'Enlace no valido'}), 404
+    if shared.read_only or not shared.allow_edit:
+        return jsonify({'success': False, 'error': 'Este enlace es de solo lectura'}), 403
+
+    viewer_email = session.get(f"shared_email_{token}")
+    viewer_name = session.get(f"shared_name_{token}")
+    if not viewer_email or not viewer_name:
+        return jsonify({'success': False, 'error': 'Debes validar correo para participar'}), 401
+
+    chat = db.session.get(Conversation, shared.conversation_id)
+    if not chat:
+        return jsonify({'success': False, 'error': 'Chat no encontrado'}), 404
+
+    message = (request.form.get('message', '') or '').strip()
+    study_mode = (request.form.get('study_mode', 'normal') or 'normal').strip().lower()
+    image_file = request.files.get('image')
+
+    if not message and not image_file:
+        return jsonify({'success': False, 'error': 'Mensaje vacio'}), 400
+    if message and len(message) > CHAT_MAX_TEXT_CHARS:
+        return jsonify({'success': False, 'error': f'Maximo {CHAT_MAX_TEXT_CHARS} caracteres'}), 400
+
+    image_url = None
+    img_pil = None
+    if image_file:
+        img_bytes = image_file.read()
+        if len(img_bytes) > CHAT_MAX_IMAGE_BYTES:
+            return jsonify({'success': False, 'error': 'Imagen demasiado grande (8MB max)'}), 400
+        image_file.stream.seek(0)
+        img_pil = Image.open(BytesIO(img_bytes))
+
+        if CLOUDINARY_URL:
+            up = cloudinary.uploader.upload(
+                BytesIO(img_bytes),
+                folder=f"nexus/{shared.owner_id}/{chat.id}",
+                resource_type="image"
+            )
+            image_url = up.get("secure_url")
+        else:
+            filename = secure_filename(image_file.filename or "")
+            ext = os.path.splitext(filename)[1].lower()
+            if ext not in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
+                ext = '.png'
+            unique_name = f"shared_{shared.owner_id}_{chat.id}_{int(datetime.now(timezone.utc).timestamp())}_{random.randint(1000,9999)}{ext}"
+            image_path = os.path.join(UPLOAD_DIR, unique_name)
+            with open(image_path, "wb") as f:
+                f.write(img_bytes)
+            image_url = f"/static/uploads/{unique_name}"
+
+    label = f"({viewer_name}) "
+    if image_url:
+        img_md = f"![Imagen enviada]({image_url})"
+        body = f"{img_md}\n\n{label}{message}" if message else f"{img_md}\n\n{label}"
+    else:
+        body = f"{label}{message}"
+
+    user_msg = Message(
+        content=_sanitize_text_for_db(body),
+        sender='user',
+        conversation_id=chat.id
+    )
+    user_msg.has_image = bool(image_url)
+    db.session.add(user_msg)
+    db.session.commit()
+
+    question_text = message if message else "Analiza esta imagen y explica que ves."
+    if viewer_name:
+        question_text = f"Pregunta de {viewer_name}: {question_text}"
+
+    try:
+        bot_text, latency_ms = _generate_ai_response(
+            conversation_id=chat.id,
+            question_text=question_text,
+            study_mode=study_mode,
+            img_pil=img_pil,
+            max_message_id=user_msg.id
+        )
+        bot_msg = Message(
+            content=_sanitize_text_for_db(bot_text),
+            sender='bot',
+            conversation_id=chat.id
+        )
+        db.session.add(bot_msg)
+        db.session.commit()
+
+        log_event(
+            "SHARED_CHAT_SENT",
+            chat_id=chat.id,
+            owner_id=shared.owner_id,
+            viewer=viewer_email,
+            latency_ms=latency_ms
+        )
+
+        return jsonify({
+            'success': True,
+            'response': bot_msg.content,
+            'user_message_id': user_msg.id,
+            'bot_message_id': bot_msg.id
+        })
+    except Exception as e:
+        print(f"ERROR shared_send: {e}")
+        return jsonify({'success': False, 'error': 'No se pudo enviar'}), 500
+
+
+@app.route('/shared_regenerate/<token>', methods=['POST'])
+def shared_regenerate(token):
+    shared = SharedConversation.query.filter_by(token=token).first()
+    if not shared:
+        return jsonify({'success': False, 'error': 'Enlace no valido'}), 404
+    if shared.read_only or not shared.allow_regenerate:
+        return jsonify({'success': False, 'error': 'Este enlace no permite regenerar'}), 403
+
+    viewer_email = session.get(f"shared_email_{token}")
+    if not viewer_email:
+        return jsonify({'success': False, 'error': 'Debes validar correo para participar'}), 401
+
+    payload = request.get_json(silent=True) or {}
+    bot_message_id = payload.get('bot_message_id')
+    if not bot_message_id:
+        return jsonify({'success': False, 'error': 'Falta bot_message_id'}), 400
+
+    try:
+        bot_message_id = int(bot_message_id)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'ID invalido'}), 400
+
+    chat_id = shared.conversation_id
+    bot_msg = db.session.get(Message, bot_message_id)
+    if not bot_msg or bot_msg.conversation_id != chat_id or bot_msg.sender != 'bot':
+        return jsonify({'success': False, 'error': 'Mensaje bot invalido'}), 400
+
+    user_msg = (
+        Message.query
+        .filter(
+            Message.conversation_id == chat_id,
+            Message.sender == 'user',
+            Message.id < bot_msg.id
+        )
+        .order_by(Message.id.desc())
+        .first()
+    )
+    if not user_msg:
+        return jsonify({'success': False, 'error': 'No se encontro mensaje previo'}), 400
+
+    question_text = (user_msg.content or "").strip()
+    image_url = _extract_image_url(question_text) if user_msg.has_image else None
+    if image_url:
+        question_text = IMAGE_MD_RE.sub("", question_text).strip()
+    if not question_text:
+        question_text = "Analiza de nuevo esta imagen y explica con claridad."
+
+    try:
+        bot_text, latency_ms = _generate_ai_response(
+            conversation_id=chat_id,
+            question_text=question_text,
+            study_mode=(payload.get('study_mode') or 'normal'),
+            img_pil=_load_image_from_message_content(user_msg.content) if user_msg.has_image else None,
+            max_message_id=user_msg.id
+        )
+        bot_msg.content = _sanitize_text_for_db(bot_text)
+        db.session.commit()
+
+        log_event(
+            "SHARED_CHAT_REGENERATE",
+            chat_id=chat_id,
+            owner_id=shared.owner_id,
+            viewer=viewer_email,
+            latency_ms=latency_ms
+        )
+        return jsonify({'success': True, 'response': bot_msg.content, 'bot_message_id': bot_msg.id})
+    except Exception as e:
+        print(f"ERROR shared_regenerate: {e}")
+        return jsonify({'success': False, 'error': 'No se pudo regenerar'}), 500
+
+
+@app.route('/edit_and_resend', methods=['POST'])
+@login_required
+def edit_and_resend():
+    payload = request.get_json(silent=True) or {}
+    chat_id = payload.get('chat_id')
+    message_id = payload.get('message_id')
+    new_text = (payload.get('message') or '').strip()
+    study_mode = (payload.get('study_mode') or 'normal').strip().lower()
+
+    if not chat_id or not message_id or not new_text:
+        return jsonify({'success': False, 'error': 'Datos incompletos'}), 400
+
+    try:
+        chat_id = int(chat_id)
+        message_id = int(message_id)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'IDs inválidos'}), 400
+
+    if len(new_text) > CHAT_MAX_TEXT_CHARS:
+        return jsonify({'success': False, 'error': f'Máximo {CHAT_MAX_TEXT_CHARS} caracteres'}), 400
+
+    chat = db.session.get(Conversation, chat_id)
+    if not chat or chat.user_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Chat no autorizado'}), 403
+
+    msg = db.session.get(Message, message_id)
+    if not msg or msg.conversation_id != chat.id or msg.sender != 'user':
+        return jsonify({'success': False, 'error': 'Mensaje inválido'}), 400
+
+    last_user = (
+        Message.query
+        .filter_by(conversation_id=chat.id, sender='user')
+        .order_by(Message.timestamp.desc(), Message.id.desc())
+        .first()
+    )
+    if not last_user or last_user.id != msg.id:
+        return jsonify({'success': False, 'error': 'Solo puedes editar el último mensaje de usuario'}), 400
+
+    image_url = _extract_image_url(msg.content) if msg.has_image else None
+    if msg.has_image and image_url:
+        img_md = f"![Imagen enviada]({image_url})"
+        msg.content = f"{img_md}\n\n{new_text}" if new_text else img_md
+    else:
+        msg.content = new_text
+    msg.content = _sanitize_text_for_db(msg.content)
+
+    tail = Message.query.filter(
+        Message.conversation_id == chat.id,
+        Message.id > msg.id
+    ).all()
+    for item in tail:
+        db.session.delete(item)
+    db.session.commit()
+
+    try:
+        question_text = new_text or "Analiza de nuevo esta imagen y explica con claridad."
+        img_for_ai = _load_image_from_message_content(msg.content) if msg.has_image else None
+        texto_limpio, latency_ms = _generate_ai_response(
+            conversation_id=chat.id,
+            question_text=question_text,
+            study_mode=study_mode,
+            img_pil=img_for_ai,
+            max_message_id=msg.id
+        )
+
+        bot_msg = Message(
+            content=_sanitize_text_for_db(texto_limpio),
+            sender='bot',
+            conversation_id=chat.id
+        )
+        db.session.add(bot_msg)
+        db.session.commit()
+
+        log_event(
+            "CHAT_EDIT_RESEND",
+            user_id=current_user.id,
+            chat_id=chat.id,
+            msg_id=msg.id,
+            latency_ms=latency_ms
+        )
+
+        return jsonify({
+            'success': True,
+            'response': texto_limpio,
+            'chat_id': chat.id,
+            'user_message_id': msg.id,
+            'bot_message_id': bot_msg.id
+        })
+    except Exception as e:
+        print(f"❌ ERROR edit_and_resend: {e}")
+        return jsonify({'success': False, 'error': 'No se pudo regenerar la respuesta'}), 500
+
+
+@app.route('/regenerate_response', methods=['POST'])
+@login_required
+def regenerate_response():
+    payload = request.get_json(silent=True) or {}
+    chat_id = payload.get('chat_id')
+    bot_message_id = payload.get('bot_message_id')
+
+    if not chat_id or not bot_message_id:
+        return jsonify({'success': False, 'error': 'Datos incompletos'}), 400
+
+    try:
+        chat_id = int(chat_id)
+        bot_message_id = int(bot_message_id)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'IDs invalidos'}), 400
+
+    chat = db.session.get(Conversation, chat_id)
+    if not chat or chat.user_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Chat no autorizado'}), 403
+
+    bot_msg = db.session.get(Message, bot_message_id)
+    if not bot_msg or bot_msg.conversation_id != chat_id or bot_msg.sender != 'bot':
+        return jsonify({'success': False, 'error': 'Mensaje bot invalido'}), 400
+
+    user_msg = (
+        Message.query
+        .filter(
+            Message.conversation_id == chat_id,
+            Message.sender == 'user',
+            Message.id < bot_msg.id
+        )
+        .order_by(Message.id.desc())
+        .first()
+    )
+    if not user_msg:
+        return jsonify({'success': False, 'error': 'No se encontro mensaje de usuario previo'}), 400
+
+    try:
+        question_text = (user_msg.content or "").strip()
+        image_url = _extract_image_url(question_text) if user_msg.has_image else None
+        if image_url:
+            question_text = IMAGE_MD_RE.sub("", question_text).strip()
+        if not question_text:
+            question_text = "Analiza de nuevo esta imagen y explica con claridad."
+
+        img_for_ai = _load_image_from_message_content(user_msg.content) if user_msg.has_image else None
+        texto_limpio, latency_ms = _generate_ai_response(
+            conversation_id=chat_id,
+            question_text=question_text,
+            study_mode=(payload.get('study_mode') or 'normal'),
+            img_pil=img_for_ai,
+            max_message_id=user_msg.id
+        )
+
+        bot_msg.content = _sanitize_text_for_db(texto_limpio)
+        db.session.commit()
+
+        log_event(
+            "CHAT_REGENERATE",
+            user_id=current_user.id,
+            chat_id=chat_id,
+            user_msg_id=user_msg.id,
+            bot_msg_id=bot_msg.id,
+            latency_ms=latency_ms
+        )
+
+        return jsonify({
+            'success': True,
+            'response': bot_msg.content,
+            'bot_message_id': bot_msg.id,
+            'user_message_id': user_msg.id
+        })
+    except Exception as e:
+        print(f"ERROR regenerate_response: {e}")
+        return jsonify({'success': False, 'error': 'No se pudo regenerar'}), 500
+
+
+@app.route('/chat', methods=['POST'])
+@login_required
+def chat():
+    # Configura key por request y valida
+    api_key_used = configurar_gemini_random()
+    if not api_key_used:
+        print("ERROR: GEMINI_KEYS vacio o no cargado")
+        return jsonify({'response': "No hay API Key configurada para Gemini. Revisa GEMINI_KEYS."}), 500
     # =========================================================
     # Fase 2 — Paso 2.6: Rate limit para /chat (protege costos)
     # =========================================================
@@ -1268,7 +1964,7 @@ def chat():
             contenido_msg = mensaje_usuario
 
         msg_db = Message(
-            content=contenido_msg if contenido_msg else "[Imagen enviada]",
+            content=_sanitize_text_for_db(contenido_msg if contenido_msg else "[Imagen enviada]"),
             sender='user',
             conversation_id=chat_id
         )
@@ -1276,51 +1972,15 @@ def chat():
         db.session.add(msg_db)
         db.session.commit()
 
-        # =========================================================
-        # Fase 3 — Instrucciones según modo de estudio
-        # =========================================================
-        modo_instruccion = ""
-        if study_mode == "step":
-            modo_instruccion = (
-                "Responde como tutor académico. Explica paso a paso, sin saltarte pasos, "
-                "y al final haz 1 pregunta corta para confirmar si entendió."
-            )
-        elif study_mode == "hints":
-            modo_instruccion = (
-                "Da únicamente 2-3 pistas y una pregunta guía. No des la solución completa aún."
-            )
-        elif study_mode == "result":
-            modo_instruccion = (
-                "Da solo el resultado final y una explicación muy breve (1-2 líneas)."
-            )
-        # Si es "normal", modo_instruccion queda vacío ("")
+        question_text = mensaje_usuario if mensaje_usuario else "Analiza esta imagen y explica que ves."
+        texto_limpio, latency_ms = _generate_ai_response(
+            conversation_id=chat_id,
+            question_text=question_text,
+            study_mode=study_mode,
+            img_pil=img_pil,
+            max_message_id=msg_db.id
+        )
 
-        # =========================================================
-        # Fase 3 — Construir contenido con modo de estudio
-        # =========================================================
-        contenido_a_enviar = []
-        if img_pil:
-            contenido_a_enviar.append(img_pil)
-            texto_prompt = mensaje_usuario if mensaje_usuario else "Analiza esta imagen y explica qué ves."
-            
-            # Aplicar modo de estudio si está activo
-            if modo_instruccion:
-                texto_prompt = f"{modo_instruccion}\n\nPregunta del estudiante: {texto_prompt}"
-            
-            contenido_a_enviar.append(texto_prompt)
-        else:
-            texto_final = mensaje_usuario
-            
-            # Aplicar modo de estudio si está activo
-            if modo_instruccion:
-                texto_final = f"{modo_instruccion}\n\nPregunta del estudiante: {mensaje_usuario}"
-            
-            contenido_a_enviar.append(f"(Usuario): {texto_final}")
-
-        t0 = time.time()
-        response = chat_session.send_message(contenido_a_enviar)
-
-        latency_ms = int((time.time() - t0) * 1000)
         log_event(
             "CHAT_SENT",
             user_id=current_user.id,
@@ -1330,22 +1990,30 @@ def chat():
             latency_ms=latency_ms
         )
 
-        texto_limpio = response.text.replace(r'\hline', '')
-
         # FIX: SQLAlchemy 2.0 reemplaza Query.get() por session.get()
         convo = db.session.get(Conversation, chat_id)
         new_title = None
         if convo and convo.title == "Nuevo Chat":
             titulo_base = mensaje_usuario if mensaje_usuario else "Imagen Analizada"
-            convo.title = " ".join(titulo_base.split()[:4]) + "..."
+            convo.title = _sanitize_text_for_db(" ".join(titulo_base.split()[:4]) + "...")[:100]
             db.session.commit()
             new_title = convo.title
 
-        bot_msg_db = Message(content=texto_limpio, sender='bot', conversation_id=chat_id)
+        bot_msg_db = Message(
+            content=_sanitize_text_for_db(texto_limpio),
+            sender='bot',
+            conversation_id=chat_id
+        )
         db.session.add(bot_msg_db)
         db.session.commit()
 
-        return jsonify({'response': texto_limpio, 'chat_id': chat_id, 'new_title': new_title})
+        return jsonify({
+            'response': texto_limpio,
+            'chat_id': chat_id,
+            'new_title': new_title,
+            'user_message_id': msg_db.id,
+            'bot_message_id': bot_msg_db.id
+        })
 
     except Exception as e:
         print(f"❌ ERROR: {e}")
@@ -1359,3 +2027,6 @@ print("GEMINI_KEYS count:", len(LISTA_DE_CLAVES))
 # =========================================================
 if __name__ == '__main__':
     app.run()
+
+
+

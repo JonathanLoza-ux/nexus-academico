@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acceso a conversacion compartida</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/nexus-brain.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+      body.shared-access-page {
+        margin: 0;
+        min-height: 100dvh;
+        overflow: auto !important;
+        background:
+          radial-gradient(900px 480px at 105% -10%, rgba(6,182,212,0.18), transparent 60%),
+          radial-gradient(700px 420px at -10% 110%, rgba(14,165,233,0.14), transparent 58%),
+          var(--bg-dark);
+      }
+      .shared-access {
+        min-height: 100dvh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: clamp(16px, 4vw, 32px);
+      }
+      .shared-card {
+        width: min(430px, 92vw);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)), var(--bg-sidebar);
+        padding: 22px;
+        box-shadow: 0 16px 42px rgba(0,0,0,0.45);
+      }
+      .shared-card h1 {
+        margin: 0 0 8px 0;
+        font-size: 1.35rem;
+        line-height: 1.25;
+      }
+      .shared-card p {
+        margin: 0 0 14px 0;
+        color: var(--text-dim);
+        line-height: 1.45;
+      }
+      .shared-card input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 11px;
+        background: var(--bg-dark);
+        color: var(--text-main);
+      }
+      .shared-card input:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      .shared-card button {
+        margin-top: 10px;
+        width: 100%;
+      }
+      .shared-error {
+        margin-top: 10px;
+        color: #fecaca;
+        border: 1px solid rgba(239,68,68,0.4);
+        border-radius: 10px;
+        padding: 10px;
+        background: rgba(239,68,68,0.1);
+      }
+      @media (max-width: 520px) {
+        .shared-card {
+          width: 100%;
+          border-radius: 14px;
+          padding: 18px;
+        }
+        .shared-card h1 {
+          font-size: 1.2rem;
+        }
+      }
+    </style>
+</head>
+<body class="shared-access-page">
+  <div class="shared-access">
+    <form class="shared-card" method="post" action="{{ url_for('shared_chat', token=token) }}">
+      <h1>Acceso a conversacion compartida</h1>
+      <p>Ingresa tu correo para continuar. Si no tienes cuenta, entraras como invitado.</p>
+      <input type="email" name="email" placeholder="tu_correo@dominio.com" required>
+      <button class="submit-btn" type="submit">Entrar</button>
+      {% if error %}
+      <div class="shared-error">{{ error }}</div>
+      {% endif %}
+    </form>
+  </div>
+</body>
+</html>
