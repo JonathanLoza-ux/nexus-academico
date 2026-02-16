@@ -634,6 +634,33 @@ body.is-responding #user-input{
   max-width: 100%;
 }
 
+/* Links en respuestas: mas visibles en tema oscuro y claro */
+.rendered-text a,
+.saved-item .saved-text a{
+  color: #22d3ee;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 2px;
+  font-weight: 700;
+  word-break: break-word;
+  border-radius: 6px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.rendered-text a:hover,
+.saved-item .saved-text a:hover{
+  color: #67e8f9;
+  background: rgba(34,211,238,0.14);
+}
+body.light-mode .rendered-text a,
+body.light-mode .saved-item .saved-text a{
+  color: #0c4a6e;
+}
+body.light-mode .rendered-text a:hover,
+body.light-mode .saved-item .saved-text a:hover{
+  color: #0369a1;
+  background: rgba(3,105,161,0.12);
+}
+
 /* ✅ Burbujas más anchas en móvil */
 @media (max-width: 768px){
   .message{ 

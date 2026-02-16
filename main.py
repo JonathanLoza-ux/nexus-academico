@@ -531,6 +531,22 @@ AI_MODEL_CANDIDATES = [
     for x in (os.getenv("AI_MODEL_CANDIDATES") or "gemini-2.5-flash,gemini-flash-lite-latest,gemini-flash-latest").split(",")
     if x.strip()
 ]
+RESOURCE_HTTP_TIMEOUT_S = int((os.getenv("RESOURCE_HTTP_TIMEOUT_S") or "6").strip())
+WIKI_ENABLED = (os.getenv("WIKI_ENABLED") or "1").strip() == "1"
+WIKI_LANG = (os.getenv("WIKI_LANG") or "es").strip().lower()
+try:
+    WIKI_HINT_PROB = float((os.getenv("WIKI_HINT_PROB") or "0.45").strip())
+except Exception:
+    WIKI_HINT_PROB = 0.45
+WIKI_HINT_PROB = max(0.0, min(1.0, WIKI_HINT_PROB))
+YOUTUBE_API_KEY = (os.getenv("YOUTUBE_API_KEY") or "").strip()
+YOUTUBE_ENABLED = ((os.getenv("YOUTUBE_ENABLED") or "1").strip() == "1") and bool(YOUTUBE_API_KEY)
+try:
+    YOUTUBE_INCLUDE_PROB = float((os.getenv("YOUTUBE_INCLUDE_PROB") or "0.35").strip())
+except Exception:
+    YOUTUBE_INCLUDE_PROB = 0.35
+YOUTUBE_INCLUDE_PROB = max(0.0, min(1.0, YOUTUBE_INCLUDE_PROB))
+YOUTUBE_MAX_RESULTS = max(1, min(3, int((os.getenv("YOUTUBE_MAX_RESULTS") or "2").strip())))
 
 
 # =========================================================
@@ -1358,6 +1374,136 @@ def _friendly_ai_error(exc: Exception) -> str:
     return f"Error de Gemini: {str(exc)[:180]}"
 
 
+def _resource_query_from_question(question_text: str) -> str:
+    q = (question_text or "").strip()
+    if not q:
+        return ""
+    q = IMAGE_MD_RE.sub("", q)
+    q = re.sub(r"^Pregunta de [^:]+:\s*", "", q, flags=re.IGNORECASE)
+    q = re.sub(r"\s+", " ", q).strip()
+    return q[:180]
+
+
+def _wiki_links(query: str, limit: int = 2):
+    if not WIKI_ENABLED or not query:
+        return []
+    try:
+        url = f"https://{WIKI_LANG}.wikipedia.org/w/api.php"
+        params = {
+            "action": "opensearch",
+            "search": query,
+            "limit": max(1, min(3, int(limit))),
+            "namespace": 0,
+            "format": "json",
+        }
+        r = requests.get(
+            url,
+            params=params,
+            timeout=RESOURCE_HTTP_TIMEOUT_S,
+            headers={"User-Agent": "NexusAcademico/1.0"}
+        )
+        if not r.ok:
+            return []
+        data = r.json() or []
+        titles = data[1] if len(data) > 1 and isinstance(data[1], list) else []
+        urls = data[3] if len(data) > 3 and isinstance(data[3], list) else []
+        out = []
+        for title, link in zip(titles, urls):
+            if title and link:
+                out.append({"title": str(title).strip(), "url": str(link).strip(), "source": "Wikipedia"})
+        return out
+    except Exception:
+        return []
+
+
+def _should_include_youtube(query: str) -> bool:
+    if not YOUTUBE_ENABLED or not query:
+        return False
+    q = query.lower()
+    kws = [
+        "tutorial", "curso", "video", "youtube", "clase",
+        "aprender", "paso a paso", "ejercicio", "practica"
+    ]
+    if any(k in q for k in kws):
+        return True
+    return random.random() < YOUTUBE_INCLUDE_PROB
+
+
+def _youtube_links(query: str, limit: int = 2):
+    if not YOUTUBE_ENABLED or not query:
+        return []
+    try:
+        params = {
+            "part": "snippet",
+            "type": "video",
+            "q": query,
+            "maxResults": max(1, min(3, int(limit))),
+            "relevanceLanguage": "es",
+            "safeSearch": "moderate",
+            "key": YOUTUBE_API_KEY
+        }
+        r = requests.get(
+            "https://www.googleapis.com/youtube/v3/search",
+            params=params,
+            timeout=RESOURCE_HTTP_TIMEOUT_S
+        )
+        if not r.ok:
+            return []
+        data = r.json() or {}
+        items = data.get("items") or []
+        out = []
+        for it in items:
+            vid = (((it or {}).get("id") or {}).get("videoId") or "").strip()
+            title = (((it or {}).get("snippet") or {}).get("title") or "").strip()
+            if vid and title:
+                out.append({
+                    "title": title,
+                    "url": f"https://www.youtube.com/watch?v={vid}",
+                    "source": "YouTube"
+                })
+        return out
+    except Exception:
+        return []
+
+
+def _build_learning_links_markdown(question_text: str) -> str:
+    query = _resource_query_from_question(question_text)
+    if not query:
+        return ""
+
+    wiki = _wiki_links(query, limit=2)
+    yt = _youtube_links(query, limit=YOUTUBE_MAX_RESULTS) if _should_include_youtube(query) else []
+
+    if not wiki and not yt:
+        return ""
+
+    lines = ["### Recursos para profundizar"]
+    if wiki and random.random() < WIKI_HINT_PROB:
+        note = random.choice([
+            "Dato rapido: te dejo una referencia para investigar mas.",
+            "Si quieres profundizar, revisa esta fuente de Wikipedia.",
+            "Extra de estudio: este enlace te ayuda a ampliar el tema.",
+        ])
+        lines.append(f"_{note}_")
+    for row in wiki:
+        lines.append(f"- Wikipedia: [{row['title']}]({row['url']})")
+    for row in yt:
+        lines.append(f"- Video recomendado: [{row['title']}]({row['url']})")
+    return "\n".join(lines)
+
+
+def _append_learning_links(answer_text: str, question_text: str) -> str:
+    base = (answer_text or "").strip()
+    if not base:
+        return base
+    if "### Recursos para profundizar" in base:
+        return base
+    links = _build_learning_links_markdown(question_text)
+    if not links:
+        return base
+    return f"{base}\n\n---\n{links}"
+
+
 def _generate_ai_response(*, conversation_id: int, question_text: str, study_mode: str = "normal", img_pil=None, max_message_id: int = None):
     if not LISTA_DE_CLAVES:
         raise RuntimeError("No hay API Key configurada para Gemini")
@@ -1401,7 +1547,9 @@ def _generate_ai_response(*, conversation_id: int, question_text: str, study_mod
                     request_options={"timeout": AI_REQUEST_TIMEOUT_S, "retry": None}
                 )
                 latency_ms = int((time.time() - t0) * 1000)
-                text = _sanitize_text_for_db((response.text or "").replace(r'\hline', ''))
+                raw_text = (response.text or "").replace(r'\hline', '')
+                merged_text = _append_learning_links(raw_text, question_text)
+                text = _sanitize_text_for_db(merged_text)
                 if not text.strip():
                     raise RuntimeError("Gemini devolvio respuesta vacia")
 
@@ -2309,12 +2457,16 @@ def chat():
             type(e).__name__
         )
         err_msg = str(e).strip() or "Tuve un problema técnico procesando eso. Intenta de nuevo."
+        links_md = _build_learning_links_markdown(mensaje_usuario or "")
+        err_body = f"Nexus no pudo responder: {err_msg}"
+        if links_md:
+            err_body = f"{err_body}\n\n---\n{links_md}"
         bot_message_id = None
         try:
             cid = int(chat_id) if chat_id else None
             if cid:
                 bot_err = Message(
-                    content=_sanitize_text_for_db(f"Nexus no pudo responder: {err_msg}"),
+                    content=_sanitize_text_for_db(err_body),
                     sender='bot',
                     conversation_id=cid
                 )
@@ -2323,7 +2475,7 @@ def chat():
                 bot_message_id = bot_err.id
         except Exception:
             db.session.rollback()
-        return jsonify({'success': False, 'error': err_msg, 'response': err_msg, 'bot_message_id': bot_message_id}), 502
+        return jsonify({'success': False, 'error': err_msg, 'response': err_body, 'bot_message_id': bot_message_id}), 502
 
 print("GEMINI_KEYS exist?:", bool(os.getenv("GEMINI_KEYS")))
 print("GEMINI_KEYS count:", len(LISTA_DE_CLAVES))

@@ -467,9 +467,10 @@ async function enviarMensaje(opts = {}) {
     loader?.classList.add('hidden');
     if (!res.ok || data?.success === false) {
       const err = (data && (data.error || data.response)) ? (data.error || data.response) : `Error ${res.status}`;
+      const bubbleText = (data && data.response) ? data.response : err;
       showToast(err || "No se pudo procesar la solicitud");
-      if (err) {
-        const errBubble = mostrarMensaje(err, 'bot');
+      if (bubbleText) {
+        const errBubble = mostrarMensaje(bubbleText, 'bot');
         if (data?.bot_message_id && errBubble) {
           errBubble.dataset.messageId = String(data.bot_message_id);
         }
