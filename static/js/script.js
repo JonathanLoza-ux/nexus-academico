@@ -122,7 +122,10 @@ function toggleModal(modalId) { document.getElementById(modalId).classList.toggl
 function openModal(id){ document.getElementById(id)?.classList.add('show'); }
 function closeModal(id){ document.getElementById(id)?.classList.remove('show'); }
 
-function toggleDropdown() { document.getElementById("myDropdown")?.classList.toggle('show'); }
+function toggleDropdown(ev) {
+  if (ev?.stopPropagation) ev.stopPropagation();
+  document.getElementById("myDropdown")?.classList.toggle('show');
+}
 
 function closeAllChatMenus() {
   document.querySelectorAll(".chat-menu.show").forEach(m => m.classList.remove("show"));
@@ -805,36 +808,111 @@ async function copyToClipboard(text) {
   }
 }
 
-function saveMessage(messageEl) {
-  const raw = getMessageRaw(messageEl);
-  if (!raw) {
-    showToast("No hay contenido para guardar");
-    return;
-  }
-  let saved = [];
-  try { saved = JSON.parse(localStorage.getItem("nexus_saved_msgs") || "[]"); } catch(e) {}
-  saved.unshift({ text: raw, ts: new Date().toISOString() });
-  saved = saved.slice(0, 200);
-  try { localStorage.setItem("nexus_saved_msgs", JSON.stringify(saved)); } catch(e) {}
-  showToast("Guardado en Favoritos");
-}
+const SAVED_LEGACY_STORAGE_KEY = "nexus_saved_msgs";
+let savedMessagesCache = [];
+let savedMessagesLoaded = false;
+let legacySavedSyncDone = false;
 
-function getSavedMessages() {
+function getLegacySavedMessages() {
   try {
-    return JSON.parse(localStorage.getItem("nexus_saved_msgs") || "[]");
+    const raw = JSON.parse(localStorage.getItem(SAVED_LEGACY_STORAGE_KEY) || "[]");
+    return Array.isArray(raw) ? raw : [];
   } catch (e) {
     return [];
   }
 }
 
-function renderSavedMessages() {
+function clearLegacySavedMessages() {
+  try { localStorage.removeItem(SAVED_LEGACY_STORAGE_KEY); } catch (e) {}
+}
+
+async function syncLegacySavedMessagesIfNeeded() {
+  if (legacySavedSyncDone) return;
+  legacySavedSyncDone = true;
+  const legacyItems = getLegacySavedMessages();
+  if (!legacyItems.length) return;
+  try {
+    const res = await fetch("/saved_messages/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: legacyItems })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      clearLegacySavedMessages();
+    }
+  } catch (e) {
+    legacySavedSyncDone = false;
+  }
+}
+
+async function fetchSavedMessagesFromServer() {
+  const res = await fetch("/saved_messages", { method: "GET" });
+  const data = await res.json();
+  if (!res.ok || !data.success || !Array.isArray(data.items)) {
+    throw new Error(data.error || "No se pudieron cargar los guardados");
+  }
+  return data.items;
+}
+
+async function getSavedMessages(forceReload = false) {
+  if (!forceReload && savedMessagesLoaded) return savedMessagesCache;
+  await syncLegacySavedMessagesIfNeeded();
+  try {
+    savedMessagesCache = await fetchSavedMessagesFromServer();
+    savedMessagesLoaded = true;
+    return savedMessagesCache;
+  } catch (e) {
+    const fallback = getLegacySavedMessages();
+    savedMessagesCache = fallback.map((item, idx) => ({
+      id: `legacy-${idx}`,
+      text: item?.text || "",
+      ts: item?.ts || null,
+      legacy: true
+    }));
+    savedMessagesLoaded = true;
+    return savedMessagesCache;
+  }
+}
+
+async function saveMessage(messageEl) {
+  const raw = getMessageRaw(messageEl);
+  if (!raw) {
+    showToast("No hay contenido para guardar");
+    return;
+  }
+  try {
+    const res = await fetch("/saved_messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: raw })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      showToast(data.error || "No se pudo guardar");
+      return;
+    }
+    savedMessagesLoaded = false;
+    showToast(data.dedup ? "Ese mensaje ya estaba guardado" : "Guardado en Mis Guardados");
+    if (document.getElementById("savedModal")?.classList.contains("show")) {
+      await renderSavedMessages();
+    }
+  } catch (e) {
+    showToast("Error al guardar");
+  }
+}
+
+async function renderSavedMessages() {
   const list = document.getElementById("savedList");
   if (!list) return;
-  const items = getSavedMessages();
+  list.innerHTML = `<div class="saved-item"><div class="saved-text">Cargando guardados...</div></div>`;
+
+  const items = await getSavedMessages(true);
   if (!items.length) {
     list.innerHTML = `<div class="saved-item"><div class="saved-text">Aun no tienes mensajes guardados.</div></div>`;
     return;
   }
+
   list.innerHTML = items.map((item, idx) => {
     const when = item.ts ? new Date(item.ts).toLocaleString("es-ES") : "Sin fecha";
     return `
@@ -853,26 +931,24 @@ function renderSavedMessages() {
 
   list.querySelectorAll(".saved-text[data-index]").forEach((el) => {
     const idx = Number(el.dataset.index || -1);
-    const item = items[idx];
+    const item = savedMessagesCache[idx];
     renderMessageContent(el, item ? (item.text || "") : "");
   });
 }
 
-function openSavedModal() {
-  renderSavedMessages();
+async function openSavedModal() {
   openModal("savedModal");
+  await renderSavedMessages();
 }
 
 async function copySavedItem(index) {
-  const items = getSavedMessages();
-  const item = items[index];
+  const item = savedMessagesCache[index];
   if (!item) return;
   await copyToClipboard(item.text || "");
 }
 
 function exportSavedItemMarkdown(index) {
-  const items = getSavedMessages();
-  const item = items[index];
+  const item = savedMessagesCache[index];
   if (!item) return;
 
   const when = item.ts ? new Date(item.ts).toLocaleString("es-ES") : "Sin fecha";
@@ -883,8 +959,7 @@ function exportSavedItemMarkdown(index) {
 }
 
 function exportSavedItemPdf(index) {
-  const items = getSavedMessages();
-  const item = items[index];
+  const item = savedMessagesCache[index];
   if (!item) return;
 
   const popup = window.open("", "_blank");
@@ -977,17 +1052,48 @@ function exportSavedItemPdf(index) {
   popup.document.close();
 }
 
-function deleteSavedItem(index) {
-  const items = getSavedMessages();
-  items.splice(index, 1);
-  try { localStorage.setItem("nexus_saved_msgs", JSON.stringify(items)); } catch(e) {}
-  renderSavedMessages();
+async function deleteSavedItem(index) {
+  const item = savedMessagesCache[index];
+  if (!item) return;
+  if (item.legacy || String(item.id).startsWith("legacy-")) {
+    const legacyItems = getLegacySavedMessages();
+    legacyItems.splice(index, 1);
+    try { localStorage.setItem(SAVED_LEGACY_STORAGE_KEY, JSON.stringify(legacyItems)); } catch (e) {}
+    savedMessagesLoaded = false;
+    await renderSavedMessages();
+    showToast("Guardado eliminado");
+    return;
+  }
+  try {
+    const res = await fetch(`/saved_messages/${item.id}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      showToast(data.error || "No se pudo eliminar");
+      return;
+    }
+    savedMessagesLoaded = false;
+    await renderSavedMessages();
+    showToast("Guardado eliminado");
+  } catch (e) {
+    showToast("Error al eliminar");
+  }
 }
 
-function clearSavedMessages() {
-  try { localStorage.removeItem("nexus_saved_msgs"); } catch(e) {}
-  renderSavedMessages();
-  showToast("Guardados limpiados");
+async function clearSavedMessages() {
+  try {
+    const res = await fetch("/saved_messages", { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      showToast(data.error || "No se pudieron limpiar");
+      return;
+    }
+    clearLegacySavedMessages();
+    savedMessagesLoaded = false;
+    await renderSavedMessages();
+    showToast("Guardados limpiados");
+  } catch (e) {
+    showToast("Error al limpiar guardados");
+  }
 }
 
 function findPreviousUserMessage(messageEl) {

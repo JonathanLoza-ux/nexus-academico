@@ -134,11 +134,23 @@ body {
 
 /* Dropdown */
 .dropdown-content {
-    display: none; position: absolute; top: 50px; right: 0;
+    --dropdown-x: 0%;
+    display: block; position: absolute; top: 50px; right: 0;
     background: var(--bg-sidebar); min-width: 200px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
     border-radius: 12px; border: 1px solid var(--border); z-index: 2000;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateX(var(--dropdown-x)) translateY(-8px) scale(0.98);
+    transform-origin: top right;
+    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
 }
-.dropdown-content.show { display: block; }
+.dropdown-content.show {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateX(var(--dropdown-x)) translateY(0) scale(1);
+}
 .dropdown-header-info { padding: 15px; text-align: center; border-bottom: 1px solid var(--border); }
 .dropdown-content a { color: var(--text-main); padding: 12px 20px; text-decoration: none; display: flex; gap: 10px; align-items: center; }
 
@@ -402,11 +414,6 @@ body.is-responding #user-input{
 /* Mejor dropdown */
 .dropdown-content{
     overflow: hidden;
-    animation: dropdownIn .12s ease-out;
-}
-@keyframes dropdownIn{
-    from{ transform: translateY(-6px); opacity: 0; }
-    to{ transform: translateY(0); opacity: 1; }
 }
 .dropdown-content::before{
     content:"";
@@ -427,7 +434,7 @@ body.is-responding #user-input{
     background: rgba(255,255,255,0.06);
 }
 .profile-pic-placeholder{
-    box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+    box-shadow: none;
 }
 
 /* Modal confirmación eliminar */
@@ -544,7 +551,8 @@ body.is-responding #user-input{
     left: 50%;
     right: auto;
     top: 78px;
-    transform: translateX(-50%);
+    --dropdown-x: -50%;
+    transform-origin: top center;
     width: min(92vw, 420px);
     border-radius: 18px;
   }

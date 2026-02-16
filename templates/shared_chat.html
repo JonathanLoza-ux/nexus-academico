@@ -192,6 +192,50 @@
         .shared-layout #overlay.active {
             opacity: 1;
         }
+        .shared-profile-wrap .dropdown-content {
+            min-width: 210px;
+            top: 48px;
+            right: 0;
+        }
+        .shared-profile-btn {
+            border: 1px solid rgba(6,182,212,0.45);
+            padding: 0;
+            cursor: pointer;
+            background: radial-gradient(120% 120% at 20% 20%, #22d3ee 0%, #06b6d4 45%, #0891b2 100%);
+            color: #062531;
+            transition: transform 0.18s ease, filter 0.18s ease;
+        }
+        .shared-profile-btn:hover {
+            filter: brightness(1.05);
+            transform: translateY(-1px) scale(1.03);
+        }
+        .shared-profile-menu {
+            display: block !important;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transform: translateY(-8px) scale(0.98);
+            transform-origin: top center;
+            transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
+        }
+        .shared-profile-menu.show {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+            transform: translateY(0) scale(1);
+        }
+        .shared-profile-sub {
+            margin-top: 4px;
+            color: var(--text-dim);
+            font-size: 0.78rem;
+        }
+        .shared-logout-link {
+            color: #fecaca !important;
+        }
+        .shared-logout-link:hover {
+            color: #fecaca !important;
+            background: rgba(239,68,68,0.12) !important;
+        }
 
         @media (max-width: 768px) {
             .shared-sidebar {
@@ -218,6 +262,19 @@
                 grid-template-columns: 45px 1fr 45px;
                 gap: 10px;
                 align-items: center;
+            }
+            .shared-profile-wrap .dropdown-content {
+                position: fixed;
+                left: 50%;
+                right: auto;
+                top: 78px;
+                width: min(92vw, 360px);
+            }
+            .shared-profile-menu {
+                transform: translateX(-50%) translateY(-8px) scale(0.98);
+            }
+            .shared-profile-menu.show {
+                transform: translateX(-50%) translateY(0) scale(1);
             }
         }
 
@@ -296,9 +353,19 @@
 
                 <h3 class="app-title">Conversacion Compartida</h3>
 
-                <div class="user-profile-area">
-                    <div class="profile-pic-placeholder">
+                <div class="user-profile-area profile-dropdown shared-profile-wrap" id="sharedProfileWrap">
+                    <button type="button" class="profile-pic-placeholder shared-profile-btn" id="sharedProfileBtn" aria-haspopup="true" aria-expanded="false">
                         {{ (viewer_name[:1] if viewer_name else 'U') | upper }}
+                    </button>
+                    <div class="dropdown-content shared-profile-menu" id="sharedProfileMenu">
+                        <div class="dropdown-header-info">
+                            <strong>{{ viewer_name or 'Invitado' }}</strong>
+                            <div class="shared-profile-sub">Sesion compartida</div>
+                        </div>
+                        <a href="#" class="shared-logout-link" id="sharedLogoutAction">
+                            <i class="fas fa-right-from-bracket"></i>
+                            Cerrar sesion
+                        </a>
                     </div>
                 </div>
             </header>
@@ -874,6 +941,43 @@
           });
         }
 
+        function initSharedProfileMenu() {
+          var wrap = document.getElementById("sharedProfileWrap");
+          var btn = document.getElementById("sharedProfileBtn");
+          var menu = document.getElementById("sharedProfileMenu");
+          var logout = document.getElementById("sharedLogoutAction");
+          if (!wrap || !btn || !menu || !logout) return;
+
+          function closeMenu() {
+            menu.classList.remove("show");
+            btn.setAttribute("aria-expanded", "false");
+          }
+
+          btn.addEventListener("click", function (e) {
+            e.stopPropagation();
+            var isOpen = menu.classList.toggle("show");
+            btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+          });
+
+          menu.addEventListener("click", function (e) {
+            e.stopPropagation();
+          });
+
+          document.addEventListener("click", closeMenu);
+
+          logout.addEventListener("click", async function (e) {
+            e.preventDefault();
+            closeMenu();
+            try {
+              var res = await fetch("/shared_logout/" + SHARE_TOKEN, { method: "POST" });
+              var data = await res.json();
+              window.location.href = (data && data.redirect) ? data.redirect : "/login";
+            } catch (err) {
+              window.location.href = "/shared_logout/" + SHARE_TOKEN;
+            }
+          });
+        }
+
         window.toggleSharedSidebar = function () {
           var sidebar = document.querySelector(".shared-sidebar");
           var overlay = document.getElementById("overlay");
@@ -963,6 +1067,7 @@
         refreshPresence();
         setInterval(refreshPresence, 25000);
         initModePlus();
+        initSharedProfileMenu();
       })();
     </script>
 </body>

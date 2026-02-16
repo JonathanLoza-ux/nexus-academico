@@ -16,6 +16,7 @@ from PIL import Image
 
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from sqlalchemy import inspect, text
 
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -294,7 +295,9 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(100), unique=True, nullable=False)
     password = db.Column(db.String(255), nullable=False)
     name = db.Column(db.String(100), nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow_naive, index=True)
     conversations = db.relationship('Conversation', backref='owner', lazy=True)
+    saved_messages = db.relationship('SavedMessage', backref='owner', lazy=True, cascade="all, delete-orphan")
 
 
 class Conversation(db.Model):
@@ -312,6 +315,13 @@ class Message(db.Model):
     timestamp = db.Column(db.DateTime, default=utcnow_naive)  # ✅ Cambiado a naive UTC
     has_image = db.Column(db.Boolean, default=False)
     conversation_id = db.Column(db.Integer, db.ForeignKey('conversation.id'), nullable=False)
+
+
+class SavedMessage(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow_naive, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
 
 
 class SharedConversation(db.Model):
@@ -390,6 +400,33 @@ class RateLimit(db.Model):
     blocked_until = db.Column(db.DateTime, nullable=True)
 
 
+def _ensure_user_created_at_column():
+    try:
+        inspector = inspect(db.engine)
+        cols = {c["name"] for c in inspector.get_columns("user")}
+        if "created_at" in cols:
+            return False
+
+        dialect = (db.engine.dialect.name or "").lower()
+        if dialect in ("mysql", "mariadb"):
+            db.session.execute(text("ALTER TABLE `user` ADD COLUMN created_at DATETIME NULL"))
+            db.session.execute(text("UPDATE `user` SET created_at = UTC_TIMESTAMP() WHERE created_at IS NULL"))
+        elif dialect == "sqlite":
+            db.session.execute(text("ALTER TABLE \"user\" ADD COLUMN created_at DATETIME"))
+            db.session.execute(text("UPDATE \"user\" SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
+        else:
+            db.session.execute(text("ALTER TABLE \"user\" ADD COLUMN created_at TIMESTAMP NULL"))
+            db.session.execute(text("UPDATE \"user\" SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
+
+        db.session.commit()
+        print("Migracion aplicada: user.created_at agregado y rellenado para usuarios existentes.")
+        return True
+    except Exception as e:
+        db.session.rollback()
+        print(f"No se pudo aplicar migracion user.created_at: {e}")
+        return False
+
+
 # =========================================================
 # VERIFICACIÓN DE CREACIÓN DE TABLAS
 # =========================================================
@@ -399,6 +436,7 @@ if ENVIRONMENT == "dev":
 
 with app.app_context():
     db.create_all()
+    _ensure_user_created_at_column()
     print("=== TABLAS CREADAS/VERIFICADAS ===")
     
     # =========================================================
@@ -1482,6 +1520,32 @@ def shared_presence(token):
     return jsonify({'success': True, 'count': _shared_viewer_count(token)})
 
 
+@app.route('/shared_logout/<token>', methods=['GET', 'POST'])
+def shared_logout(token):
+    email_key = f"shared_email_{token}"
+    name_key = f"shared_name_{token}"
+    viewer_email = session.get(email_key)
+
+    try:
+        if viewer_email:
+            (
+                SharedViewerPresence.query
+                .filter_by(token=token, email=viewer_email)
+                .delete(synchronize_session=False)
+            )
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    session.pop(email_key, None)
+    session.pop(name_key, None)
+    redirect_url = url_for('login_page')
+
+    if request.method == 'POST':
+        return jsonify({'success': True, 'redirect': redirect_url})
+    return redirect(redirect_url)
+
+
 @app.route('/shared_export/<token>', methods=['GET'])
 def shared_export(token):
     shared = SharedConversation.query.filter_by(token=token).first()
@@ -1697,6 +1761,155 @@ def shared_regenerate(token):
     except Exception as e:
         print(f"ERROR shared_regenerate: {e}")
         return jsonify({'success': False, 'error': 'No se pudo regenerar'}), 500
+
+
+SAVED_MAX_ITEMS_PER_USER = 500
+
+
+def _parse_client_iso_to_naive_utc(value: str):
+    raw = (value or "").strip()
+    if not raw:
+        return utcnow_naive()
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return to_naive_utc(dt)
+    except Exception:
+        return utcnow_naive()
+
+
+def _prune_saved_messages(user_id: int, keep: int = SAVED_MAX_ITEMS_PER_USER):
+    rows = (
+        SavedMessage.query
+        .filter_by(user_id=user_id)
+        .order_by(SavedMessage.created_at.desc(), SavedMessage.id.desc())
+        .all()
+    )
+    if len(rows) <= keep:
+        return
+    for item in rows[keep:]:
+        db.session.delete(item)
+
+
+@app.route('/saved_messages', methods=['GET'])
+@login_required
+def list_saved_messages():
+    rows = (
+        SavedMessage.query
+        .filter_by(user_id=current_user.id)
+        .order_by(SavedMessage.created_at.desc(), SavedMessage.id.desc())
+        .all()
+    )
+    return jsonify({
+        'success': True,
+        'items': [
+            {
+                'id': row.id,
+                'text': row.content or '',
+                'ts': f"{row.created_at.isoformat()}Z" if row.created_at else None
+            }
+            for row in rows
+        ]
+    })
+
+
+@app.route('/saved_messages', methods=['POST'])
+@login_required
+def create_saved_message():
+    payload = request.get_json(silent=True) or {}
+    raw_text = (payload.get('text') or '').strip()
+    if not raw_text:
+        return jsonify({'success': False, 'error': 'No hay contenido para guardar'}), 400
+
+    clean_text = _sanitize_text_for_db(raw_text)
+    if not clean_text.strip():
+        return jsonify({'success': False, 'error': 'Contenido invalido'}), 400
+    if len(clean_text) > 120000:
+        return jsonify({'success': False, 'error': 'Contenido demasiado largo'}), 400
+
+    now = utcnow_naive()
+    latest_same = (
+        SavedMessage.query
+        .filter_by(user_id=current_user.id, content=clean_text)
+        .order_by(SavedMessage.created_at.desc(), SavedMessage.id.desc())
+        .first()
+    )
+    if latest_same and latest_same.created_at and (now - latest_same.created_at).total_seconds() <= 15:
+        return jsonify({
+            'success': True,
+            'item': {
+                'id': latest_same.id,
+                'text': latest_same.content,
+                'ts': f"{latest_same.created_at.isoformat()}Z"
+            },
+            'dedup': True
+        })
+
+    row = SavedMessage(content=clean_text, user_id=current_user.id, created_at=now)
+    db.session.add(row)
+    _prune_saved_messages(current_user.id)
+    db.session.commit()
+    return jsonify({
+        'success': True,
+        'item': {
+            'id': row.id,
+            'text': row.content,
+            'ts': f"{row.created_at.isoformat()}Z"
+        }
+    })
+
+
+@app.route('/saved_messages/sync', methods=['POST'])
+@login_required
+def sync_saved_messages():
+    payload = request.get_json(silent=True) or {}
+    items = payload.get('items') or []
+    if not isinstance(items, list):
+        return jsonify({'success': False, 'error': 'Formato invalido'}), 400
+
+    inserted = 0
+    for item in items[:200]:
+        if not isinstance(item, dict):
+            continue
+        text = _sanitize_text_for_db((item.get('text') or '').strip())
+        if not text:
+            continue
+        exists = SavedMessage.query.filter_by(user_id=current_user.id, content=text).first()
+        if exists:
+            continue
+        row = SavedMessage(
+            content=text,
+            user_id=current_user.id,
+            created_at=_parse_client_iso_to_naive_utc(item.get('ts') or '')
+        )
+        db.session.add(row)
+        inserted += 1
+
+    _prune_saved_messages(current_user.id)
+    db.session.commit()
+    return jsonify({'success': True, 'inserted': inserted})
+
+
+@app.route('/saved_messages/<int:item_id>', methods=['DELETE'])
+@login_required
+def delete_saved_message(item_id):
+    row = SavedMessage.query.filter_by(id=item_id, user_id=current_user.id).first()
+    if not row:
+        return jsonify({'success': False, 'error': 'Guardado no encontrado'}), 404
+    db.session.delete(row)
+    db.session.commit()
+    return jsonify({'success': True})
+
+
+@app.route('/saved_messages', methods=['DELETE'])
+@login_required
+def clear_saved_messages():
+    (
+        SavedMessage.query
+        .filter_by(user_id=current_user.id)
+        .delete(synchronize_session=False)
+    )
+    db.session.commit()
+    return jsonify({'success': True})
 
 
 @app.route('/edit_and_resend', methods=['POST'])
