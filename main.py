@@ -12,6 +12,7 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for, f
 from dotenv import load_dotenv
 
 import google.generativeai as genai
+from google.api_core import exceptions as gexc
 from PIL import Image
 
 from flask_sqlalchemy import SQLAlchemy
@@ -523,6 +524,13 @@ CHAT_RL_BLOCK_S = 60           # bloqueo 60s
 # Límites de payload (seguridad + costos)
 CHAT_MAX_TEXT_CHARS = 2000
 CHAT_MAX_IMAGE_BYTES = 8 * 1024 * 1024   # 8MB
+AI_REQUEST_TIMEOUT_S = int((os.getenv("AI_REQUEST_TIMEOUT_S") or "15").strip())
+AI_MAX_KEY_RETRIES = int((os.getenv("AI_MAX_KEY_RETRIES") or "1").strip())
+AI_MODEL_CANDIDATES = [
+    x.strip()
+    for x in (os.getenv("AI_MODEL_CANDIDATES") or "gemini-2.5-flash,gemini-flash-lite-latest,gemini-flash-latest").split(",")
+    if x.strip()
+]
 
 
 # =========================================================
@@ -1310,7 +1318,7 @@ def _load_image_from_message_content(md_content: str):
     return None
 
 
-def _build_recent_context(conversation_id: int, limit: int = 8, max_message_id: int = None) -> str:
+def _build_recent_context(conversation_id: int, limit: int = 6, max_message_id: int = None) -> str:
     q = Message.query.filter_by(conversation_id=conversation_id)
     if max_message_id is not None:
         q = q.filter(Message.id <= max_message_id)
@@ -1322,27 +1330,41 @@ def _build_recent_context(conversation_id: int, limit: int = 8, max_message_id: 
     for row in rows:
         role = "Usuario" if row.sender == "user" else "Nexus"
         content = (row.content or "").strip()
-        if len(content) > 650:
-            content = content[:650] + "..."
+        if len(content) > 380:
+            content = content[:380] + "..."
         lines.append(f"{role}: {content}")
     return "\n".join(lines)
 
 
-def _generate_ai_response(*, conversation_id: int, question_text: str, study_mode: str = "normal", img_pil=None, max_message_id: int = None):
-    api_key_used = configurar_gemini_random()
-    if not api_key_used:
-        raise RuntimeError("No hay API Key configurada para Gemini")
+def _mask_key(key: str) -> str:
+    if not key:
+        return "none"
+    return f"...{key[-4:]}"
 
-    model = genai.GenerativeModel(
-        model_name='gemini-flash-latest',
-        generation_config=configuracion,
-        system_instruction=instruccion_sistema
-    )
-    chat_session = model.start_chat(history=[])
+
+def _friendly_ai_error(exc: Exception) -> str:
+    if isinstance(exc, gexc.ResourceExhausted):
+        return "Gemini está temporalmente sin cupo. Intenta de nuevo en unos segundos."
+    if isinstance(exc, gexc.DeadlineExceeded):
+        return "Gemini tardó demasiado en responder. Intenta con una pregunta más corta."
+    if isinstance(exc, gexc.Unauthenticated):
+        return "Una clave de Gemini es inválida. Revisa GEMINI_KEYS."
+    if isinstance(exc, gexc.PermissionDenied):
+        return "Gemini rechazó la solicitud por permisos de la clave."
+    if isinstance(exc, gexc.ServiceUnavailable):
+        return "Gemini no está disponible en este momento. Intenta de nuevo."
+    if isinstance(exc, gexc.InvalidArgument):
+        return "Gemini rechazó la solicitud por formato inválido."
+    return f"Error de Gemini: {str(exc)[:180]}"
+
+
+def _generate_ai_response(*, conversation_id: int, question_text: str, study_mode: str = "normal", img_pil=None, max_message_id: int = None):
+    if not LISTA_DE_CLAVES:
+        raise RuntimeError("No hay API Key configurada para Gemini")
 
     context_block = _build_recent_context(
         conversation_id=conversation_id,
-        limit=8,
+        limit=6,
         max_message_id=max_message_id
     )
     mode_block = _study_instruction(study_mode)
@@ -1353,14 +1375,65 @@ def _generate_ai_response(*, conversation_id: int, question_text: str, study_mod
     if context_block:
         prompt += f"Contexto reciente de la conversacion:\n{context_block}\n\n"
     prompt += f"Pregunta actual del estudiante:\n{question_text}"
-
     payload = [img_pil, prompt] if img_pil is not None else [prompt]
 
-    t0 = time.time()
-    response = chat_session.send_message(payload)
-    latency_ms = int((time.time() - t0) * 1000)
-    text = _sanitize_text_for_db((response.text or "").replace(r'\hline', ''))
-    return text, latency_ms
+    keys = [k for k in LISTA_DE_CLAVES if k]
+    random.shuffle(keys)
+    max_attempts = max(1, min(len(keys), AI_MAX_KEY_RETRIES if AI_MAX_KEY_RETRIES > 0 else len(keys)))
+    attempts = keys[:max_attempts]
+    model_candidates = AI_MODEL_CANDIDATES or ["gemini-flash-latest"]
+
+    last_exc = None
+    for idx, key in enumerate(attempts, start=1):
+        genai.configure(api_key=key)
+        for model_name in model_candidates:
+            try:
+                model = genai.GenerativeModel(
+                    model_name=model_name,
+                    generation_config=configuracion,
+                    system_instruction=instruccion_sistema
+                )
+                chat_session = model.start_chat(history=[])
+
+                t0 = time.time()
+                response = chat_session.send_message(
+                    payload,
+                    request_options={"timeout": AI_REQUEST_TIMEOUT_S, "retry": None}
+                )
+                latency_ms = int((time.time() - t0) * 1000)
+                text = _sanitize_text_for_db((response.text or "").replace(r'\hline', ''))
+                if not text.strip():
+                    raise RuntimeError("Gemini devolvio respuesta vacia")
+
+                log_event(
+                    "AI_OK",
+                    chat_id=conversation_id,
+                    attempt=idx,
+                    key_mask=_mask_key(key),
+                    model=model_name,
+                    latency_ms=latency_ms
+                )
+                return text, latency_ms
+            except Exception as e:
+                last_exc = e
+                log_event(
+                    "AI_FAIL",
+                    chat_id=conversation_id,
+                    attempt=idx,
+                    key_mask=_mask_key(key),
+                    model=model_name,
+                    reason=type(e).__name__,
+                    detail=str(e)[:140]
+                )
+                if isinstance(e, (gexc.InvalidArgument, gexc.PermissionDenied, gexc.Unauthenticated)):
+                    raise RuntimeError(_friendly_ai_error(e))
+                if isinstance(e, (gexc.NotFound, gexc.ResourceExhausted, gexc.DeadlineExceeded)):
+                    continue
+                continue
+
+    if last_exc:
+        raise RuntimeError(_friendly_ai_error(last_exc))
+    raise RuntimeError("Gemini no respondio. Intenta nuevamente.")
 
 
 def _touch_shared_viewer(token: str, email: str, name: str):
@@ -1688,8 +1761,8 @@ def shared_send(token):
             'bot_message_id': bot_msg.id
         })
     except Exception as e:
-        print(f"ERROR shared_send: {e}")
-        return jsonify({'success': False, 'error': 'No se pudo enviar'}), 500
+        logger.exception("SHARED_SEND_ERROR chat_id=%s viewer=%s", chat.id if chat else None, viewer_email)
+        return jsonify({'success': False, 'error': str(e) or 'No se pudo enviar'}), 500
 
 
 @app.route('/shared_regenerate/<token>', methods=['POST'])
@@ -1759,8 +1832,8 @@ def shared_regenerate(token):
         )
         return jsonify({'success': True, 'response': bot_msg.content, 'bot_message_id': bot_msg.id})
     except Exception as e:
-        print(f"ERROR shared_regenerate: {e}")
-        return jsonify({'success': False, 'error': 'No se pudo regenerar'}), 500
+        logger.exception("SHARED_REGENERATE_ERROR chat_id=%s viewer=%s", chat_id, viewer_email)
+        return jsonify({'success': False, 'error': str(e) or 'No se pudo regenerar'}), 500
 
 
 SAVED_MAX_ITEMS_PER_USER = 500
@@ -2001,8 +2074,8 @@ def edit_and_resend():
             'bot_message_id': bot_msg.id
         })
     except Exception as e:
-        print(f"❌ ERROR edit_and_resend: {e}")
-        return jsonify({'success': False, 'error': 'No se pudo regenerar la respuesta'}), 500
+        logger.exception("EDIT_AND_RESEND_ERROR user_id=%s chat_id=%s", current_user.id, chat.id if chat else None)
+        return jsonify({'success': False, 'error': str(e) or 'No se pudo regenerar la respuesta'}), 500
 
 
 @app.route('/regenerate_response', methods=['POST'])
@@ -2078,18 +2151,18 @@ def regenerate_response():
             'user_message_id': user_msg.id
         })
     except Exception as e:
-        print(f"ERROR regenerate_response: {e}")
-        return jsonify({'success': False, 'error': 'No se pudo regenerar'}), 500
+        logger.exception("REGENERATE_RESPONSE_ERROR user_id=%s chat_id=%s", current_user.id, chat_id)
+        return jsonify({'success': False, 'error': str(e) or 'No se pudo regenerar'}), 500
 
 
 @app.route('/chat', methods=['POST'])
 @login_required
 def chat():
-    # Configura key por request y valida
-    api_key_used = configurar_gemini_random()
-    if not api_key_used:
+    # Valida que existan keys (la selección/reintento se maneja en _generate_ai_response)
+    if not LISTA_DE_CLAVES:
         print("ERROR: GEMINI_KEYS vacio o no cargado")
-        return jsonify({'response': "No hay API Key configurada para Gemini. Revisa GEMINI_KEYS."}), 500
+        msg = "No hay API Key configurada para Gemini. Revisa GEMINI_KEYS."
+        return jsonify({'success': False, 'error': msg, 'response': msg}), 500
     # =========================================================
     # Fase 2 — Paso 2.6: Rate limit para /chat (protege costos)
     # =========================================================
@@ -2229,8 +2302,28 @@ def chat():
         })
 
     except Exception as e:
-        print(f"❌ ERROR: {e}")
-        return jsonify({'response': "Tuve un problema técnico procesando eso. Intenta de nuevo."}), 200
+        logger.exception(
+            "CHAT_ERROR user_id=%s chat_id=%s err=%s",
+            current_user.id if current_user.is_authenticated else None,
+            chat_id,
+            type(e).__name__
+        )
+        err_msg = str(e).strip() or "Tuve un problema técnico procesando eso. Intenta de nuevo."
+        bot_message_id = None
+        try:
+            cid = int(chat_id) if chat_id else None
+            if cid:
+                bot_err = Message(
+                    content=_sanitize_text_for_db(f"Nexus no pudo responder: {err_msg}"),
+                    sender='bot',
+                    conversation_id=cid
+                )
+                db.session.add(bot_err)
+                db.session.commit()
+                bot_message_id = bot_err.id
+        except Exception:
+            db.session.rollback()
+        return jsonify({'success': False, 'error': err_msg, 'response': err_msg, 'bot_message_id': bot_message_id}), 502
 
 print("GEMINI_KEYS exist?:", bool(os.getenv("GEMINI_KEYS")))
 print("GEMINI_KEYS count:", len(LISTA_DE_CLAVES))

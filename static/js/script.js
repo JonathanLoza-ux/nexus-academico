@@ -349,6 +349,21 @@ function ensureRenderedContainer(messageEl) {
   return rendered;
 }
 
+async function parseResponseBody(res) {
+  let raw = "";
+  try {
+    raw = await res.text();
+  } catch (e) {
+    raw = "";
+  }
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return { error: raw.slice(0, 220) };
+  }
+}
+
 async function enviarMensaje(opts = {}) {
   if (isResponding) return;
 
@@ -425,13 +440,17 @@ async function enviarMensaje(opts = {}) {
 
   if (fileToSend) quitarImagen();
 
+  let timeoutId = null;
   try {
     let res = null;
+    const controller = new AbortController();
+    timeoutId = setTimeout(() => controller.abort(), 70000);
     if (isEditingFlow) {
       const userMessageId = getMessageId(editedUserEl);
       res = await fetch('/edit_and_resend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           chat_id: chatId,
           message_id: userMessageId,
@@ -440,14 +459,25 @@ async function enviarMensaje(opts = {}) {
         })
       });
     } else {
-      res = await fetch('/chat', { method: 'POST', body: fd });
+      res = await fetch('/chat', { method: 'POST', body: fd, signal: controller.signal });
     }
-
-    const data = await res.json();
+    clearTimeout(timeoutId);
+    const data = await parseResponseBody(res);
 
     loader?.classList.add('hidden');
-    if (!res.ok || data.success === false) {
-      showToast(data.error || "No se pudo procesar la solicitud");
+    if (!res.ok || data?.success === false) {
+      const err = (data && (data.error || data.response)) ? (data.error || data.response) : `Error ${res.status}`;
+      showToast(err || "No se pudo procesar la solicitud");
+      if (err) {
+        const errBubble = mostrarMensaje(err, 'bot');
+        if (data?.bot_message_id && errBubble) {
+          errBubble.dataset.messageId = String(data.bot_message_id);
+        }
+      }
+      return;
+    }
+    if (!data || typeof data !== "object") {
+      showToast("Respuesta inválida del servidor");
       return;
     }
 
@@ -506,8 +536,13 @@ async function enviarMensaje(opts = {}) {
 
   } catch (e) {
     loader?.classList.add('hidden');
-    mostrarMensaje("Error de conexión.", 'bot');
+    if (e && e.name === "AbortError") {
+      mostrarMensaje("La solicitud tardó demasiado y fue cancelada. Intenta de nuevo.", 'bot');
+    } else {
+      mostrarMensaje("Error de conexión con el servidor.", 'bot');
+    }
   } finally {
+    if (timeoutId) clearTimeout(timeoutId);
     setResponding(false);
   }
 }
