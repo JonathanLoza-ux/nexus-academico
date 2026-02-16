@@ -18,6 +18,7 @@ from PIL import Image
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import OperationalError
 
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -196,9 +197,18 @@ uri_db = (os.getenv("DATABASE_URL") or "").strip()
 if not uri_db:
     raise RuntimeError("❌ Falta DATABASE_URL en el .env / Render Environment Variables")
 
+# Compatibilidad: SQLAlchemy 2 usa MySQLdb por defecto con mysql://
+# y en este proyecto usamos PyMySQL.
+if uri_db.startswith("mysql://"):
+    uri_db = "mysql+pymysql://" + uri_db[len("mysql://"):]
+
 app.config['SQLALCHEMY_DATABASE_URI'] = uri_db
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_recycle': 280}
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 280,
+    'connect_args': {'connect_timeout': 10}
+}
 
 db = SQLAlchemy(app)
 
@@ -436,9 +446,23 @@ if ENVIRONMENT == "dev":
     print("Modelos detectados:", [model.__name__ for model in db.Model.__subclasses__()])
 
 with app.app_context():
-    db.create_all()
-    _ensure_user_created_at_column()
-    print("=== TABLAS CREADAS/VERIFICADAS ===")
+    db_init_retries = int(os.getenv("DB_INIT_RETRIES", "8"))
+    db_init_delay_s = float(os.getenv("DB_INIT_RETRY_DELAY_S", "2.0"))
+
+    for attempt in range(1, db_init_retries + 1):
+        try:
+            db.create_all()
+            _ensure_user_created_at_column()
+            print("=== TABLAS CREADAS/VERIFICADAS ===")
+            break
+        except OperationalError as e:
+            if attempt >= db_init_retries:
+                raise
+            print(
+                f"⚠️ DB no disponible al iniciar (intento {attempt}/{db_init_retries}): {e}. "
+                f"Reintentando en {db_init_delay_s}s..."
+            )
+            time.sleep(db_init_delay_s)
     
     # =========================================================
     # TEMPORAL: Limpiar datos de RateLimit con fechas mezcladas
