@@ -2505,10 +2505,12 @@ print("GEMINI_KEYS exist?:", bool(os.getenv("GEMINI_KEYS")))
 print("GEMINI_KEYS count:", len(LISTA_DE_CLAVES))
 
 # =========================================================
-# 15) RUN LOCAL
+# 15) EJECUCIÓN (Configurado para Railway/Producción)
 # =========================================================
 if __name__ == '__main__':
-    app.run()
-
-
-
+    # Railway asigna un puerto dinámico en la variable de entorno 'PORT'
+    # Si no existe (ej. corriendo local), usará el 5000 por defecto
+    port = int(os.environ.get("PORT", 5000))
+    
+    # IMPORTANTE: host='0.0.0.0' permite que el contenedor reciba tráfico externo
+    app.run(host='0.0.0.0', port=port)
