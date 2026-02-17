@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Usuarios - Nexus</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/nexus-brain.svg') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+</head>
+<body class="admin-page">
+    <div class="admin-shell">
+        <header class="admin-topbar">
+            <div class="admin-brand">
+                <i class="fas fa-shield-alt"></i>
+                <div>
+                    <h1>Usuarios</h1>
+                    <p>Control de cuentas y actividad</p>
+                </div>
+            </div>
+            <div class="admin-top-actions">
+                <a class="admin-btn" href="{{ url_for('admin_panel') }}"><i class="fas fa-chart-line"></i> Dashboard</a>
+                {% if 'manage_admins' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_admins_page') }}"><i class="fas fa-user-shield"></i> Admins</a>
+                {% endif %}
+                {% if 'view_logs' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_logs_page') }}"><i class="fas fa-clipboard-list"></i> Logs</a>
+                {% endif %}
+                {% if 'view_security' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_security_page') }}"><i class="fas fa-lock"></i> Seguridad</a>
+                {% endif %}
+                {% if 'export_reports' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_reports_page') }}"><i class="fas fa-file-export"></i> Reportes</a>
+                {% endif %}
+                <a class="admin-btn" href="{{ url_for('home') }}"><i class="fas fa-arrow-left"></i> Chat</a>
+            </div>
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <section class="admin-flashes">
+                    {% for category, message in messages %}
+                        <div class="admin-flash {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </section>
+            {% endif %}
+        {% endwith %}
+
+        <section class="admin-kpi-grid">
+            <article class="admin-kpi-card"><span>Usuarios</span><strong>{{ total_users }}</strong></article>
+            <article class="admin-kpi-card"><span>Chats</span><strong>{{ total_chats }}</strong></article>
+            <article class="admin-kpi-card"><span>Mensajes</span><strong>{{ total_messages }}</strong></article>
+            <article class="admin-kpi-card"><span>Admins activos</span><strong>{{ total_admins }}</strong></article>
+        </section>
+
+        <section class="admin-panel-card">
+            <h2>Todos los usuarios</h2>
+            <form method="GET" action="{{ url_for('admin_users_page') }}" class="admin-filters">
+                <input type="text" name="q" placeholder="Buscar por nombre, email o ID" value="{{ q }}" />
+                <select name="estado">
+                    <option value="">Todos los estados</option>
+                    <option value="activa" {% if estado == 'activa' %}selected{% endif %}>Activa</option>
+                    <option value="desactivada" {% if estado == 'desactivada' %}selected{% endif %}>Desactivada</option>
+                </select>
+                <input type="date" name="date_from" value="{{ date_from }}" />
+                <input type="date" name="date_to" value="{{ date_to }}" />
+                <select name="per_page">
+                    {% for n in per_options %}
+                    <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }} por pagina</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="admin-btn"><i class="fas fa-search"></i> Filtrar</button>
+                <a href="{{ url_for('admin_users_page') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
+            </form>
+            {% if 'export_reports' in admin_permissions %}
+            <div style="display:flex; gap:8px; margin-bottom:10px;">
+                <a class="admin-btn" href="{{ url_for('admin_export_users_xlsx') }}">
+                    <i class="fas fa-file-excel"></i> Exportar Excel (.xlsx)
+                </a>
+            </div>
+            {% endif %}
+            <div class="admin-table-wrap">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Nombre</th>
+                            <th>Email</th>
+                            <th>Registro</th>
+                            <th>Chats</th>
+                            <th>Mensajes</th>
+                            <th>Estado</th>
+                            {% if can_manage_users %}<th>Acciones</th>{% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for u in all_users %}
+                        <tr>
+                            <td>{{ u.id }}</td>
+                            <td>{{ u.name }}</td>
+                            <td><small>{{ u.email }}</small></td>
+                            <td>{{ u.created_at.strftime('%Y-%m-%d %H:%M:%S') if u.created_at else '-' }}</td>
+                            <td>{{ u.chat_count }}</td>
+                            <td>{{ u.message_count }}</td>
+                            <td>
+                                {% if u.is_active_account %}
+                                    <span class="status-pill ok">Activa</span>
+                                {% else %}
+                                    <span class="status-pill off">Desactivada</span>
+                                {% endif %}
+                            </td>
+                            {% if can_manage_users %}
+                            <td>
+                                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                    <button
+                                        type="button"
+                                        class="admin-btn"
+                                        data-id="{{ u.id }}"
+                                        data-name="{{ u.name or '' }}"
+                                        data-email="{{ u.email or '' }}"
+                                        data-created="{{ u.created_at.strftime('%Y-%m-%d %H:%M:%S') if u.created_at else '-' }}"
+                                        data-status="{{ 'Activa' if u.is_active_account else 'Desactivada' }}"
+                                        data-chats="{{ u.chat_count }}"
+                                        data-messages="{{ u.message_count }}"
+                                        onclick="openUserDetailsFromBtn(this)"
+                                    >
+                                        <i class="fas fa-eye"></i> Ver
+                                    </button>
+                                    {% if u.id != current_user.id %}
+                                    <form method="POST" action="{{ url_for('admin_user_status', user_id=u.id) }}">
+                                        {% if u.is_active_account %}
+                                            <input type="hidden" name="action" value="deactivate" />
+                                            <button type="submit" class="admin-btn danger">Desactivar</button>
+                                        {% else %}
+                                            <input type="hidden" name="action" value="activate" />
+                                            <button type="submit" class="admin-btn">Activar</button>
+                                        {% endif %}
+                                    </form>
+                                    {% if is_super_admin %}
+                                    <button
+                                        type="button"
+                                        class="admin-btn danger"
+                                        data-user-id="{{ u.id }}"
+                                        data-name="{{ u.name or '' }}"
+                                        data-email="{{ u.email or '' }}"
+                                        onclick="openDeleteUserFromBtn(this)"
+                                    >
+                                        <i class="fas fa-trash"></i> Eliminar
+                                    </button>
+                                    {% endif %}
+                                    {% else %}
+                                    <small>Tu cuenta</small>
+                                    {% endif %}
+                                </div>
+                            </td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="admin-pagination-wrap">
+                <span>Total: {{ users_total }}</span>
+                <div class="admin-pagination">
+                    {% if users_pagination.prev_url %}
+                    <a class="admin-btn" href="{{ users_pagination.prev_url }}">Anterior</a>
+                    {% endif %}
+                    {% for p in users_pagination.pages %}
+                        {% if p.current %}
+                        <span class="admin-page-current">{{ p.num }}</span>
+                        {% else %}
+                        <a class="admin-btn" href="{{ p.url }}">{{ p.num }}</a>
+                        {% endif %}
+                    {% endfor %}
+                    {% if users_pagination.next_url %}
+                    <a class="admin-btn" href="{{ users_pagination.next_url }}">Siguiente</a>
+                    {% endif %}
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <div id="userDetailsModal" class="admin-modal">
+        <div class="admin-modal-content">
+            <div class="admin-modal-header">
+                <h3>Detalle de usuario</h3>
+                <button type="button" class="admin-btn" onclick="closeAdminModal('userDetailsModal')">Cerrar</button>
+            </div>
+            <div class="admin-modal-body">
+                <p><strong>ID:</strong> <span id="userDetailId">-</span></p>
+                <p><strong>Nombre:</strong> <span id="userDetailName">-</span></p>
+                <p><strong>Email:</strong> <span id="userDetailEmail">-</span></p>
+                <p><strong>Registro:</strong> <span id="userDetailCreated">-</span></p>
+                <p><strong>Estado:</strong> <span id="userDetailStatus">-</span></p>
+                <p><strong>Chats:</strong> <span id="userDetailChats">-</span></p>
+                <p><strong>Mensajes:</strong> <span id="userDetailMessages">-</span></p>
+            </div>
+        </div>
+    </div>
+
+    <div id="deleteUserModal" class="admin-modal">
+        <div class="admin-modal-content">
+            <div class="admin-modal-header">
+                <h3>Confirmar eliminacion</h3>
+                <button type="button" class="admin-btn" onclick="closeAdminModal('deleteUserModal')">Cerrar</button>
+            </div>
+            <div class="admin-modal-body">
+                <p>Esta accion es permanente y no se puede revertir.</p>
+                <p><strong>Usuario:</strong> <span id="deleteUserName">-</span></p>
+                <p><strong>Email:</strong> <span id="deleteUserEmail">-</span></p>
+                <p>Para continuar, escribe <strong>ELIMINAR</strong> en el campo de confirmacion.</p>
+                <input
+                    type="text"
+                    id="deleteConfirmInput"
+                    class="admin-input"
+                    placeholder="Escribe ELIMINAR"
+                    autocomplete="off"
+                />
+                <form id="deleteUserForm" method="POST" action="">
+                    <button id="deleteUserSubmitBtn" type="submit" class="admin-btn danger" disabled>
+                        <i class="fas fa-trash"></i> Confirmar eliminacion
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openAdminModal(id){
+            const el = document.getElementById(id);
+            if (el) el.classList.add('show');
+        }
+        function closeAdminModal(id){
+            const el = document.getElementById(id);
+            if (el) el.classList.remove('show');
+        }
+        function openUserDetailsFromBtn(btn){
+            document.getElementById('userDetailId').textContent = btn.dataset.id || '-';
+            document.getElementById('userDetailName').textContent = btn.dataset.name || '-';
+            document.getElementById('userDetailEmail').textContent = btn.dataset.email || '-';
+            document.getElementById('userDetailCreated').textContent = btn.dataset.created || '-';
+            document.getElementById('userDetailStatus').textContent = btn.dataset.status || '-';
+            document.getElementById('userDetailChats').textContent = btn.dataset.chats || '0';
+            document.getElementById('userDetailMessages').textContent = btn.dataset.messages || '0';
+            openAdminModal('userDetailsModal');
+        }
+        function openDeleteUserFromBtn(btn){
+            const userId = btn.dataset.userId || '';
+            document.getElementById('deleteUserName').textContent = btn.dataset.name || '-';
+            document.getElementById('deleteUserEmail').textContent = btn.dataset.email || '-';
+            document.getElementById('deleteUserForm').action = '/admin/user_delete/' + userId;
+            const input = document.getElementById('deleteConfirmInput');
+            const submitBtn = document.getElementById('deleteUserSubmitBtn');
+            if (input) input.value = '';
+            if (submitBtn) submitBtn.disabled = true;
+            openAdminModal('deleteUserModal');
+        }
+        document.getElementById('deleteConfirmInput')?.addEventListener('input', function(e){
+            const value = (e.target.value || '').trim().toUpperCase();
+            const submitBtn = document.getElementById('deleteUserSubmitBtn');
+            if (submitBtn) {
+                submitBtn.disabled = value !== 'ELIMINAR';
+            }
+        });
+        document.addEventListener('click', function(e){
+            if (e.target.classList.contains('admin-modal')) {
+                e.target.classList.remove('show');
+            }
+        });
+    </script>
+</body>
+</html>

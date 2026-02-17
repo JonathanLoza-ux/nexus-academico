@@ -1,14 +1,18 @@
 import os
 import random
 import re
+import json
 from datetime import datetime, timedelta, timezone  # ✅ Cambio 1: Añadido timezone
 from io import BytesIO
 import requests
 import logging
 import time
 import uuid
+from functools import wraps
+import math
+from urllib.parse import urlencode
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session, abort
+from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session, abort, Response
 from dotenv import load_dotenv
 
 import google.generativeai as genai
@@ -17,7 +21,7 @@ from PIL import Image
 
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, text, func
 from sqlalchemy.exc import OperationalError
 
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -30,6 +34,9 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from flask_mail import Mail, Message as MailMessage
 
 from werkzeug.middleware.proxy_fix import ProxyFix
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
 
 # =========================================================
 # 1) CARGA DE VARIABLES DE ENTORNO (.env)
@@ -99,6 +106,45 @@ if not logger.handlers:
 # Entorno: dev / prod
 ENVIRONMENT = (os.getenv("ENVIRONMENT") or "dev").strip().lower()
 
+# Panel admin:
+# Puedes definir varios correos separados por coma en SUPER_ADMIN_EMAILS.
+_super_admin_env = (os.getenv("SUPER_ADMIN_EMAILS") or "jonathandavidloza@gmail.com").strip()
+SUPER_ADMIN_EMAILS = {
+    e.strip().lower() for e in _super_admin_env.split(",") if e.strip()
+}
+
+ALL_ADMIN_PERMISSIONS = {
+    "view_dashboard",
+    "view_users",
+    "view_conversations",
+    "view_logs",
+    "view_security",
+    "export_reports",
+    "manage_users",
+    "manage_admins",
+    "manage_settings",
+}
+
+DEFAULT_ADMIN_PERMISSIONS = {
+    "view_dashboard",
+    "view_users",
+    "view_conversations",
+    "view_logs",
+    "export_reports",
+}
+
+PERMISSION_LABELS_ES = {
+    "view_dashboard": "Ver panel general",
+    "view_users": "Ver usuarios",
+    "view_conversations": "Ver conversaciones",
+    "view_logs": "Ver registros (logs)",
+    "view_security": "Ver seguridad",
+    "export_reports": "Exportar reportes",
+    "manage_users": "Gestionar usuarios",
+    "manage_admins": "Gestionar administradores",
+    "manage_settings": "Gestionar configuracion",
+}
+
 # Secret key desde entorno (MUY IMPORTANTE en producción)
 app.secret_key = (os.getenv("SECRET_KEY") or "dev_secret_key_change_me").strip()
 
@@ -133,6 +179,7 @@ RESET_TOKEN_MAX_AGE = 20 * 60  # 20 minutos
 # - smtp -> envía correo real por SMTP (Brevo / Gmail / etc)
 # - brevo_api -> usa la API REST de Brevo
 RESET_MODE = (os.getenv("RESET_MODE") or "dev").strip().lower()
+SUPPORT_WHATSAPP = (os.getenv("SUPPORT_WHATSAPP") or "50364254348").strip().replace("+", "")
 
 # 3) Agregar variables Brevo después de RESET_MODE
 BREVO_API_KEY = (os.getenv("BREVO_API_KEY") or "").strip()
@@ -244,6 +291,47 @@ def _before_request_logging():
     request._rid = uuid.uuid4().hex[:12]
 
 
+@app.before_request
+def _before_request_enforce_active_account():
+    # Evita romper carga de recursos estáticos
+    if request.path.startswith("/static/"):
+        return None
+
+    if not current_user.is_authenticated:
+        return None
+
+    if bool(getattr(current_user, "is_active_account", True)):
+        return None
+
+    email_hint = (getattr(current_user, "email", "") or "").strip().lower()
+    user_id = getattr(current_user, "id", None)
+
+    logout_user()
+    for key in ["_user_id", "_fresh", "_id", "remember_token"]:
+        session.pop(key, None)
+
+    _set_login_help_mode("support", email_hint=email_hint)
+    flash("Tu cuenta esta desactivada. Contacta al administrador.", "error")
+    log_event("FORCE_LOGOUT_INACTIVE", user_id=user_id, email=email_hint, path=request.path)
+
+    redirect_url = url_for('login_page')
+    wants_json = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.path.startswith("/chat")
+        or request.path.startswith("/shared_send")
+        or request.path.startswith("/shared_regenerate")
+        or request.path.startswith("/feedback")
+    )
+    if wants_json:
+        return jsonify({
+            "success": False,
+            "error": "Tu cuenta esta desactivada. Contacta al administrador.",
+            "redirect": redirect_url,
+        }), 401
+
+    return redirect(redirect_url)
+
+
 @app.after_request
 def _after_request_logging(response):
     try:
@@ -307,6 +395,7 @@ class User(UserMixin, db.Model):
     password = db.Column(db.String(255), nullable=False)
     name = db.Column(db.String(100), nullable=False)
     created_at = db.Column(db.DateTime, default=utcnow_naive, index=True)
+    is_active_account = db.Column(db.Boolean, default=True, nullable=False, index=True)
     conversations = db.relationship('Conversation', backref='owner', lazy=True)
     saved_messages = db.relationship('SavedMessage', backref='owner', lazy=True, cascade="all, delete-orphan")
 
@@ -333,6 +422,27 @@ class SavedMessage(db.Model):
     content = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=utcnow_naive, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+
+
+class AdminRole(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, unique=True, index=True)
+    role = db.Column(db.String(20), nullable=False, default="admin", index=True)  # admin | super_admin
+    permissions_json = db.Column(db.Text, nullable=False, default="[]")
+    is_active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    granted_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow_naive, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow_naive, onupdate=utcnow_naive)
+
+
+class AdminAuditLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True, index=True)
+    action = db.Column(db.String(120), nullable=False, index=True)
+    target_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True, index=True)
+    detail = db.Column(db.Text, nullable=True)
+    ip = db.Column(db.String(64), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow_naive, index=True)
 
 
 class SharedConversation(db.Model):
@@ -411,6 +521,151 @@ class RateLimit(db.Model):
     blocked_until = db.Column(db.DateTime, nullable=True)
 
 
+def _normalize_email(value: str) -> str:
+    return (value or "").strip().lower()
+
+
+def _loads_permissions(raw: str):
+    if not raw:
+        return set()
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return {str(x).strip() for x in data if str(x).strip()}
+    except Exception:
+        pass
+    return set()
+
+
+def _dumps_permissions(perms):
+    clean = sorted({p for p in perms if p in ALL_ADMIN_PERMISSIONS})
+    return json.dumps(clean, ensure_ascii=True)
+
+
+def _permission_label_es(code: str):
+    return PERMISSION_LABELS_ES.get(code, code)
+
+
+def _is_super_admin_email(email: str) -> bool:
+    return _normalize_email(email) in SUPER_ADMIN_EMAILS
+
+
+def _get_admin_role_record(user_id: int):
+    if not user_id:
+        return None
+    return AdminRole.query.filter_by(user_id=user_id, is_active=True).first()
+
+
+def _effective_admin_role(user: User):
+    if not user:
+        return None
+    if _is_super_admin_email(user.email):
+        return "super_admin"
+    rec = _get_admin_role_record(user.id)
+    if rec and rec.role in ("admin", "super_admin"):
+        return rec.role
+    return None
+
+
+def _effective_admin_permissions(user: User):
+    role = _effective_admin_role(user)
+    if role == "super_admin":
+        return set(ALL_ADMIN_PERMISSIONS)
+    if role == "admin":
+        rec = _get_admin_role_record(user.id)
+        if not rec:
+            return set(DEFAULT_ADMIN_PERMISSIONS)
+        perms = _loads_permissions(rec.permissions_json)
+        return perms or set(DEFAULT_ADMIN_PERMISSIONS)
+    return set()
+
+
+def _admin_has_permission(user: User, permission: str):
+    if not user:
+        return False
+    perms = _effective_admin_permissions(user)
+    return permission in perms
+
+
+def _ensure_super_admin_membership(user: User):
+    """
+    Garantiza que el super admin por correo tenga registro persistente en DB.
+    """
+    if not user or not _is_super_admin_email(user.email):
+        return
+    rec = AdminRole.query.filter_by(user_id=user.id).first()
+    if not rec:
+        rec = AdminRole(
+            user_id=user.id,
+            role="super_admin",
+            permissions_json=_dumps_permissions(ALL_ADMIN_PERMISSIONS),
+            is_active=True,
+            granted_by_user_id=user.id,
+        )
+        db.session.add(rec)
+        db.session.commit()
+        return
+
+    changed = False
+    if rec.role != "super_admin":
+        rec.role = "super_admin"
+        changed = True
+    if not rec.is_active:
+        rec.is_active = True
+        changed = True
+
+    desired = _dumps_permissions(ALL_ADMIN_PERMISSIONS)
+    if rec.permissions_json != desired:
+        rec.permissions_json = desired
+        changed = True
+
+    if changed:
+        rec.updated_at = utcnow_naive()
+        db.session.commit()
+
+
+def _bootstrap_super_admin_roles():
+    if not SUPER_ADMIN_EMAILS:
+        return
+    users = User.query.filter(func.lower(User.email).in_(list(SUPER_ADMIN_EMAILS))).all()
+    for user in users:
+        _ensure_super_admin_membership(user)
+
+
+def _add_admin_audit(action: str, target_user_id=None, detail=None):
+    try:
+        row = AdminAuditLog(
+            actor_user_id=current_user.id if current_user.is_authenticated else None,
+            action=action,
+            target_user_id=target_user_id,
+            detail=(detail or "")[:2000],
+            ip=get_client_ip() if request else None,
+        )
+        db.session.add(row)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+def admin_required(permission=None, super_only=False):
+    def _decorator(fn):
+        @wraps(fn)
+        def _wrapped(*args, **kwargs):
+            if not current_user.is_authenticated:
+                return login_manager.unauthorized()
+
+            role = _effective_admin_role(current_user)
+            if not role:
+                abort(403)
+            if super_only and role != "super_admin":
+                abort(403)
+            if permission and not _admin_has_permission(current_user, permission):
+                abort(403)
+            return fn(*args, **kwargs)
+        return _wrapped
+    return _decorator
+
+
 def _ensure_user_created_at_column():
     try:
         inspector = inspect(db.engine)
@@ -441,6 +696,45 @@ def _ensure_user_created_at_column():
 # =========================================================
 # VERIFICACIÓN DE CREACIÓN DE TABLAS
 # =========================================================
+def _ensure_user_is_active_account_column():
+    try:
+        inspector = inspect(db.engine)
+        cols = {c["name"] for c in inspector.get_columns("user")}
+        if "is_active_account" in cols:
+            return False
+
+        dialect = (db.engine.dialect.name or "").lower()
+        if dialect in ("mysql", "mariadb"):
+            db.session.execute(
+                text("ALTER TABLE `user` ADD COLUMN is_active_account TINYINT(1) NOT NULL DEFAULT 1")
+            )
+            db.session.execute(
+                text("UPDATE `user` SET is_active_account = 1 WHERE is_active_account IS NULL")
+            )
+        elif dialect == "sqlite":
+            db.session.execute(
+                text("ALTER TABLE \"user\" ADD COLUMN is_active_account BOOLEAN NOT NULL DEFAULT 1")
+            )
+            db.session.execute(
+                text("UPDATE \"user\" SET is_active_account = 1 WHERE is_active_account IS NULL")
+            )
+        else:
+            db.session.execute(
+                text("ALTER TABLE \"user\" ADD COLUMN is_active_account BOOLEAN NOT NULL DEFAULT TRUE")
+            )
+            db.session.execute(
+                text("UPDATE \"user\" SET is_active_account = TRUE WHERE is_active_account IS NULL")
+            )
+
+        db.session.commit()
+        print("Migracion aplicada: user.is_active_account agregado y rellenado.")
+        return True
+    except Exception as e:
+        db.session.rollback()
+        print(f"No se pudo aplicar migracion user.is_active_account: {e}")
+        return False
+
+
 print("=== CREANDO/MODIFICANDO TABLAS ===")
 if ENVIRONMENT == "dev":
     print("Modelos detectados:", [model.__name__ for model in db.Model.__subclasses__()])
@@ -453,6 +747,8 @@ with app.app_context():
         try:
             db.create_all()
             _ensure_user_created_at_column()
+            _ensure_user_is_active_account_column()
+            _bootstrap_super_admin_roles()
             print("=== TABLAS CREADAS/VERIFICADAS ===")
             break
         except OperationalError as e:
@@ -1022,6 +1318,46 @@ def rate_limit_check(key: str, max_count: int, window_seconds: int, block_second
     return True, 0
 
 
+def _set_login_help_mode(mode: str = "", email_hint: str = ""):
+    """
+    mode:
+      - "forgot": mostrar solo enlace de recuperacion
+      - "support": mostrar solo enlace de soporte
+      - otro/empty: ocultar ambos
+    """
+    mode = (mode or "").strip().lower()
+    email_hint = (email_hint or "").strip().lower()
+
+    if mode == "forgot":
+        session["show_forgot"] = True
+        session["show_inactive_support"] = False
+        session.pop("support_email_hint", None)
+        return
+
+    if mode == "support":
+        session["show_forgot"] = False
+        session["show_inactive_support"] = True
+        if email_hint:
+            session["support_email_hint"] = email_hint
+        return
+
+    session.pop("show_forgot", None)
+    session.pop("show_inactive_support", None)
+    session.pop("support_email_hint", None)
+
+
+def _build_support_whatsapp_link():
+    if not SUPPORT_WHATSAPP:
+        return ""
+    base = f"https://wa.me/{SUPPORT_WHATSAPP}"
+    email_hint = (session.get("support_email_hint") or "").strip()
+    msg = "Hola, necesito ayuda con mi cuenta de Nexus."
+    if email_hint:
+        msg += f" Mi correo es: {email_hint}."
+    msg += " Me aparece como desactivada."
+    return f"{base}?{urlencode({'text': msg})}"
+
+
 # =========================================================
 # 13) RUTAS AUTH (Login/Register/Reset)
 # =========================================================
@@ -1031,6 +1367,10 @@ def login_page():
         return redirect(url_for('home'))
 
     show_forgot = session.get("show_forgot", False)
+    show_inactive_support = session.get("show_inactive_support", False)
+    if show_inactive_support:
+        show_forgot = False
+    support_whatsapp_link = _build_support_whatsapp_link()
 
     if request.method == 'POST':
         email = (request.form.get('email') or "").strip().lower()
@@ -1039,7 +1379,7 @@ def login_page():
         ip = get_client_ip()
 
         # =========================================================
-        # Fase 2 — Paso 2.4: Rate limit para /login (anti-bots)
+        # Fase 2 - Paso 2.4: Rate limit para /login (anti-bots)
         # =========================================================
         rl_ok, rl_wait = rate_limit_check(
             key=_rl_key("login", ip, None),
@@ -1049,41 +1389,66 @@ def login_page():
         )
         if not rl_ok:
             flash(f"Demasiadas solicitudes. Espera {rl_wait} segundos e intenta de nuevo.", "error")
-            session["show_forgot"] = True
-            return render_template('login.html', show_forgot=True)
+            _set_login_help_mode("forgot")
+            return render_template(
+                'login.html',
+                show_forgot=True,
+                show_inactive_support=False,
+                support_whatsapp_link="",
+            )
         # =========================================================
 
         ok_login, wait_login = can_login(ip, email)
         if not ok_login:
             log_event("LOGIN_BLOCKED", email=email, ip=ip, wait_s=wait_login)
-            flash(f"Demasiados intentos. Espera {wait_login} segundos o usa recuperación de contraseña.", "error")
-            session["show_forgot"] = True
-            return render_template('login.html', show_forgot=True)
+            flash(f"Demasiados intentos. Espera {wait_login} segundos o usa recuperacion de contrasena.", "error")
+            _set_login_help_mode("forgot")
+            return render_template(
+                'login.html',
+                show_forgot=True,
+                show_inactive_support=False,
+                support_whatsapp_link="",
+            )
 
         user = User.query.filter_by(email=email).first()
 
         if not user:
             log_event("LOGIN_FAIL", email=email, ip=ip, reason="no_user")
-            flash('Este correo no está registrado.', 'error')
-            session["show_forgot"] = True
+            flash('Este correo no esta registrado.', 'error')
+            _set_login_help_mode("forgot")
             register_login_fail(ip, email)
 
         elif not check_password_hash(user.password, password):
             log_event("LOGIN_FAIL", email=email, ip=ip, reason="bad_password")
-            flash('Contraseña incorrecta. Inténtalo de nuevo.', 'error')
-            session["show_forgot"] = True
+            flash('Contrasena incorrecta. Intentalo de nuevo.', 'error')
+            _set_login_help_mode("forgot")
             register_login_fail(ip, email)
+
+        elif not bool(user.is_active_account):
+            log_event("LOGIN_BLOCKED", email=email, ip=ip, reason="inactive_account", user_id=user.id)
+            flash('Tu cuenta esta desactivada. Contacta al administrador.', 'error')
+            _set_login_help_mode("support", email_hint=email)
 
         else:
             log_event("LOGIN_OK", email=email, ip=ip, user_id=user.id)
-            session.pop("show_forgot", None)
+            _set_login_help_mode("")
             clear_login_attempts(ip, email)
             login_user(user)
+            _ensure_super_admin_membership(user)
             return redirect(url_for('home'))
 
         show_forgot = session.get("show_forgot", False)
+        show_inactive_support = session.get("show_inactive_support", False)
+        if show_inactive_support:
+            show_forgot = False
+        support_whatsapp_link = _build_support_whatsapp_link()
 
-    return render_template('login.html', show_forgot=show_forgot)
+    return render_template(
+        'login.html',
+        show_forgot=show_forgot,
+        show_inactive_support=show_inactive_support,
+        support_whatsapp_link=support_whatsapp_link,
+    )
 
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -1112,6 +1477,7 @@ def register():
     db.session.commit()
 
     login_user(new_user)
+    _ensure_super_admin_membership(new_user)
     return redirect(url_for('home'))
 
 
@@ -1192,6 +1558,23 @@ def forgot_password():
     return render_template('forgot_password.html', show_support=show_support)
 
 
+@app.context_processor
+def inject_admin_nav():
+    if not current_user.is_authenticated:
+        return {
+            "can_access_admin": False,
+            "admin_role_label": None,
+            "is_super_admin": False,
+        }
+
+    role = _effective_admin_role(current_user)
+    return {
+        "can_access_admin": bool(role),
+        "admin_role_label": role,
+        "is_super_admin": role == "super_admin",
+    }
+
+
 @app.route('/reset/<token>', methods=['GET', 'POST'])
 def reset_password(token):
     try:
@@ -1218,7 +1601,7 @@ def reset_password(token):
         user.password = generate_password_hash(new_password, method='scrypt')
         db.session.commit()
 
-        session.pop("show_forgot", None)
+        _set_login_help_mode("")
 
         flash("Contraseña actualizada. Ya puedes iniciar sesión.", "success")
         return redirect(url_for('login_page'))
@@ -1253,6 +1636,946 @@ def home(chat_id=None):
         chat_history=mensajes_actuales,
         active_chat=chat_activo
     )
+
+
+def _admin_stats():
+    return {
+        "total_users": User.query.count(),
+        "total_chats": Conversation.query.count(),
+        "total_messages": Message.query.count(),
+        "total_admins": AdminRole.query.filter_by(is_active=True).count(),
+    }
+
+
+def _admin_dashboard_charts(days=7):
+    now_utc = utcnow_naive()
+    start_day = (now_utc - timedelta(days=max(1, days) - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    day_labels = []
+    day_map = {}
+    for i in range(max(1, days)):
+        d = (start_day + timedelta(days=i)).date()
+        key = d.strftime("%Y-%m-%d")
+        day_labels.append(key)
+        day_map[key] = 0
+
+    rows = (
+        Message.query
+        .filter(Message.timestamp >= start_day)
+        .order_by(Message.timestamp.asc())
+        .all()
+    )
+    for m in rows:
+        if not m.timestamp:
+            continue
+        key = m.timestamp.date().strftime("%Y-%m-%d")
+        if key in day_map:
+            day_map[key] += 1
+    message_day_values = [day_map[k] for k in day_labels]
+
+    active_users = User.query.filter(User.is_active_account == True).count()  # noqa: E712
+    inactive_users = User.query.filter(User.is_active_account == False).count()  # noqa: E712
+
+    ip_rows = (
+        LoginAttempt.query
+        .filter(LoginAttempt.attempts > 0)
+        .order_by(LoginAttempt.attempts.desc(), LoginAttempt.id.desc())
+        .limit(8)
+        .all()
+    )
+    ip_labels = [r.ip or "-" for r in ip_rows]
+    ip_values = [int(r.attempts or 0) for r in ip_rows]
+
+    return {
+        "message_day_labels": day_labels,
+        "message_day_values": message_day_values,
+        "account_status_labels": ["Activas", "Desactivadas"],
+        "account_status_values": [active_users, inactive_users],
+        "failed_ip_labels": ip_labels,
+        "failed_ip_values": ip_values,
+    }
+
+
+def _admin_admins_data():
+    admins_rows = (
+        db.session.query(AdminRole, User)
+        .join(User, User.id == AdminRole.user_id)
+        .filter(AdminRole.is_active == True)  # noqa: E712
+        .order_by(AdminRole.created_at.desc())
+        .all()
+    )
+    rows = []
+    for role_row, user_row in admins_rows:
+        perm_codes = sorted(_loads_permissions(role_row.permissions_json))
+        rows.append({
+            "role_row": role_row,
+            "user_row": user_row,
+            "permission_codes": perm_codes,
+            "permission_labels": [_permission_label_es(p) for p in perm_codes],
+        })
+    return rows
+
+
+def _admin_users_data():
+    chats_per_user_sq = (
+        db.session.query(
+            Conversation.user_id.label("uid"),
+            func.count(Conversation.id).label("chat_count"),
+        )
+        .group_by(Conversation.user_id)
+        .subquery()
+    )
+
+    messages_per_user_sq = (
+        db.session.query(
+            Conversation.user_id.label("uid"),
+            func.count(Message.id).label("message_count"),
+        )
+        .outerjoin(Message, Message.conversation_id == Conversation.id)
+        .group_by(Conversation.user_id)
+        .subquery()
+    )
+
+    all_users = (
+        db.session.query(
+            User.id,
+            User.name,
+            User.email,
+            User.created_at,
+            User.is_active_account,
+            func.coalesce(chats_per_user_sq.c.chat_count, 0).label("chat_count"),
+            func.coalesce(messages_per_user_sq.c.message_count, 0).label("message_count"),
+        )
+        .outerjoin(chats_per_user_sq, chats_per_user_sq.c.uid == User.id)
+        .outerjoin(messages_per_user_sq, messages_per_user_sq.c.uid == User.id)
+        .order_by(User.created_at.desc())
+        .all()
+    )
+    return all_users
+
+
+def _admin_recent_logs(limit=30):
+    return (
+        db.session.query(AdminAuditLog, User)
+        .outerjoin(User, User.id == AdminAuditLog.actor_user_id)
+        .order_by(AdminAuditLog.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def _admin_security_data(limit=100):
+    login_attempts = LoginAttempt.query.order_by(LoginAttempt.id.desc()).limit(limit).all()
+    reset_ip_rows = ResetIPRequest.query.order_by(ResetIPRequest.id.desc()).limit(limit).all()
+    rate_limit_rows = RateLimit.query.order_by(RateLimit.id.desc()).limit(limit).all()
+    return login_attempts, reset_ip_rows, rate_limit_rows
+
+
+def _safe_int(value, default):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_date_ymd(value: str):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def _slice_with_pagination(items, page, per_page):
+    total = len(items)
+    total_pages = max(1, math.ceil(total / per_page)) if per_page > 0 else 1
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * per_page
+    end = start + per_page
+    return items[start:end], total, total_pages, page
+
+
+def _build_pagination_links(endpoint, args_dict, page_key, per_key, page, per_page, total_pages):
+    pages = []
+    if total_pages <= 1:
+        return {"pages": pages, "prev_url": None, "next_url": None}
+
+    window = 2
+    start = max(1, page - window)
+    end = min(total_pages, page + window)
+    for num in range(start, end + 1):
+        params = dict(args_dict)
+        params[page_key] = num
+        params[per_key] = per_page
+        pages.append({
+            "num": num,
+            "current": (num == page),
+            "url": f"{url_for(endpoint)}?{urlencode(params)}",
+        })
+
+    prev_url = None
+    next_url = None
+    if page > 1:
+        p = dict(args_dict)
+        p[page_key] = page - 1
+        p[per_key] = per_page
+        prev_url = f"{url_for(endpoint)}?{urlencode(p)}"
+    if page < total_pages:
+        p = dict(args_dict)
+        p[page_key] = page + 1
+        p[per_key] = per_page
+        next_url = f"{url_for(endpoint)}?{urlencode(p)}"
+
+    return {"pages": pages, "prev_url": prev_url, "next_url": next_url}
+
+
+@app.route('/admin')
+@login_required
+@admin_required(permission="view_dashboard")
+def admin_panel():
+    role = _effective_admin_role(current_user)
+    perms = _effective_admin_permissions(current_user)
+
+    stats = _admin_stats()
+    charts = _admin_dashboard_charts(days=7)
+    top_chat_users = (
+        db.session.query(
+            User.id,
+            User.name,
+            User.email,
+            func.count(Conversation.id).label("chat_count"),
+        )
+        .outerjoin(Conversation, Conversation.user_id == User.id)
+        .group_by(User.id, User.name, User.email)
+        .order_by(func.count(Conversation.id).desc(), User.id.asc())
+        .limit(8)
+        .all()
+    )
+    top_chat_labels = [r.name for r in top_chat_users]
+    top_chat_values = [int(r.chat_count or 0) for r in top_chat_users]
+
+    return render_template(
+        'admin_panel.html',
+        admin_role=role,
+        admin_permissions=sorted(perms, key=lambda p: _permission_label_es(p)),
+        total_users=stats["total_users"],
+        total_chats=stats["total_chats"],
+        total_messages=stats["total_messages"],
+        total_admins=stats["total_admins"],
+        top_chat_labels=top_chat_labels,
+        top_chat_values=top_chat_values,
+        message_day_labels=charts["message_day_labels"],
+        message_day_values=charts["message_day_values"],
+        account_status_labels=charts["account_status_labels"],
+        account_status_values=charts["account_status_values"],
+        failed_ip_labels=charts["failed_ip_labels"],
+        failed_ip_values=charts["failed_ip_values"],
+    )
+
+
+@app.route('/admin/admins')
+@login_required
+@admin_required(super_only=True)
+def admin_admins_page():
+    role = _effective_admin_role(current_user)
+    perms = _effective_admin_permissions(current_user)
+    stats = _admin_stats()
+    args = request.args.to_dict(flat=True)
+    per_options = [5, 10, 20, 50, 100]
+
+    admins_data_all = _admin_admins_data()
+    admins_q = (request.args.get("admins_q") or "").strip().lower()
+    admins_role = (request.args.get("admins_role") or "").strip().lower()
+    admins_state = (request.args.get("admins_state") or "").strip().lower()
+
+    if admins_q:
+        admins_data_all = [
+            row for row in admins_data_all
+            if admins_q in (row["user_row"].name or "").lower()
+            or admins_q in (row["user_row"].email or "").lower()
+            or admins_q == str(row["user_row"].id)
+        ]
+    if admins_role in {"admin", "super_admin"}:
+        admins_data_all = [row for row in admins_data_all if row["role_row"].role == admins_role]
+    if admins_state in {"activo", "inactivo"}:
+        is_active = admins_state == "activo"
+        admins_data_all = [row for row in admins_data_all if bool(row["role_row"].is_active) == is_active]
+
+    per_admins = _safe_int(request.args.get("per_admins"), 10)
+    if per_admins not in per_options:
+        per_admins = 10
+    page_admins = _safe_int(request.args.get("page_admins"), 1)
+    admins_data, admins_total, admins_total_pages, page_admins = _slice_with_pagination(
+        admins_data_all, page_admins, per_admins
+    )
+    admins_pagination = _build_pagination_links(
+        "admin_admins_page", args, "page_admins", "per_admins", page_admins, per_admins, admins_total_pages
+    )
+
+    logs_all = _admin_recent_logs(limit=3000)
+    logs_q = (request.args.get("logs_q") or "").strip().lower()
+    logs_action = (request.args.get("logs_action") or "").strip().lower()
+    if logs_q:
+        logs_all = [
+            row for row in logs_all
+            if logs_q in ((row[1].email if row[1] else "") or "").lower()
+            or logs_q in (row[0].action or "").lower()
+            or logs_q in (row[0].detail or "").lower()
+            or logs_q == str(row[0].id)
+            or logs_q == str(row[0].target_user_id or "")
+        ]
+    if logs_action:
+        logs_all = [row for row in logs_all if logs_action in (row[0].action or "").lower()]
+
+    per_logs = _safe_int(request.args.get("per_logs"), 20)
+    if per_logs not in per_options:
+        per_logs = 20
+    page_logs = _safe_int(request.args.get("page_logs"), 1)
+    recent_admin_logs, logs_total, logs_total_pages, page_logs = _slice_with_pagination(
+        logs_all, page_logs, per_logs
+    )
+    logs_pagination = _build_pagination_links(
+        "admin_admins_page", args, "page_logs", "per_logs", page_logs, per_logs, logs_total_pages
+    )
+
+    return render_template(
+        'admin_admins.html',
+        admin_role=role,
+        admin_permissions=sorted(perms, key=lambda p: _permission_label_es(p)),
+        total_users=stats["total_users"],
+        total_chats=stats["total_chats"],
+        total_messages=stats["total_messages"],
+        total_admins=stats["total_admins"],
+        admins_data=admins_data,
+        recent_admin_logs=recent_admin_logs,
+        admins_q=admins_q,
+        admins_role=admins_role,
+        admins_state=admins_state,
+        logs_q=logs_q,
+        logs_action=logs_action,
+        per_options=per_options,
+        per_admins=per_admins,
+        per_logs=per_logs,
+        admins_total=admins_total,
+        logs_total=logs_total,
+        admins_pagination=admins_pagination,
+        logs_pagination=logs_pagination,
+        all_permissions=sorted(ALL_ADMIN_PERMISSIONS, key=lambda p: _permission_label_es(p)),
+        default_permissions=sorted(DEFAULT_ADMIN_PERMISSIONS, key=lambda p: _permission_label_es(p)),
+        permission_labels_es=PERMISSION_LABELS_ES,
+    )
+
+
+@app.route('/admin/usuarios')
+@login_required
+@admin_required(permission="view_users")
+def admin_users_page():
+    role = _effective_admin_role(current_user)
+    perms = _effective_admin_permissions(current_user)
+    stats = _admin_stats()
+    args = request.args.to_dict(flat=True)
+    per_options = [5, 10, 20, 50, 100]
+
+    users_all = _admin_users_data()
+    q = (request.args.get("q") or "").strip().lower()
+    estado = (request.args.get("estado") or "").strip().lower()
+    date_from = _parse_date_ymd(request.args.get("date_from"))
+    date_to = _parse_date_ymd(request.args.get("date_to"))
+    if date_to:
+        date_to = date_to + timedelta(days=1)
+
+    if q:
+        users_all = [
+            u for u in users_all
+            if q in (u.name or "").lower() or q in (u.email or "").lower() or q == str(u.id)
+        ]
+    if estado in {"activa", "desactivada"}:
+        active = estado == "activa"
+        users_all = [u for u in users_all if bool(u.is_active_account) == active]
+    if date_from:
+        users_all = [u for u in users_all if u.created_at and u.created_at >= date_from]
+    if date_to:
+        users_all = [u for u in users_all if u.created_at and u.created_at < date_to]
+
+    per_page = _safe_int(request.args.get("per_page"), 10)
+    if per_page not in per_options:
+        per_page = 10
+    page = _safe_int(request.args.get("page"), 1)
+    all_users, users_total, users_total_pages, page = _slice_with_pagination(users_all, page, per_page)
+    users_pagination = _build_pagination_links(
+        "admin_users_page", args, "page", "per_page", page, per_page, users_total_pages
+    )
+
+    return render_template(
+        'admin_users.html',
+        admin_role=role,
+        admin_permissions=sorted(perms, key=lambda p: _permission_label_es(p)),
+        can_manage_users=("manage_users" in perms),
+        is_super_admin=(role == "super_admin"),
+        total_users=stats["total_users"],
+        total_chats=stats["total_chats"],
+        total_messages=stats["total_messages"],
+        total_admins=stats["total_admins"],
+        all_users=all_users,
+        q=q,
+        estado=estado,
+        date_from=(request.args.get("date_from") or ""),
+        date_to=(request.args.get("date_to") or ""),
+        per_page=per_page,
+        per_options=per_options,
+        users_total=users_total,
+        users_pagination=users_pagination,
+    )
+
+
+@app.route('/admin/logs')
+@login_required
+@admin_required(permission="view_logs")
+def admin_logs_page():
+    role = _effective_admin_role(current_user)
+    perms = _effective_admin_permissions(current_user)
+    stats = _admin_stats()
+    args = request.args.to_dict(flat=True)
+    per_options = [5, 10, 20, 50, 100]
+    logs_all = _admin_recent_logs(limit=3000)
+    q = (request.args.get("q") or "").strip().lower()
+    action = (request.args.get("action") or "").strip().lower()
+    date_from = _parse_date_ymd(request.args.get("date_from"))
+    date_to = _parse_date_ymd(request.args.get("date_to"))
+    if date_to:
+        date_to = date_to + timedelta(days=1)
+
+    if q:
+        logs_all = [
+            row for row in logs_all
+            if q in ((row[1].email if row[1] else "") or "").lower()
+            or q in (row[0].action or "").lower()
+            or q in (row[0].detail or "").lower()
+            or q in str(row[0].id)
+            or q == str(row[0].target_user_id or "")
+        ]
+    if action:
+        logs_all = [row for row in logs_all if action in (row[0].action or "").lower()]
+    if date_from:
+        logs_all = [row for row in logs_all if row[0].created_at and row[0].created_at >= date_from]
+    if date_to:
+        logs_all = [row for row in logs_all if row[0].created_at and row[0].created_at < date_to]
+
+    per_page = _safe_int(request.args.get("per_page"), 20)
+    if per_page not in per_options:
+        per_page = 20
+    page = _safe_int(request.args.get("page"), 1)
+    recent_admin_logs, logs_total, logs_total_pages, page = _slice_with_pagination(logs_all, page, per_page)
+    logs_pagination = _build_pagination_links(
+        "admin_logs_page", args, "page", "per_page", page, per_page, logs_total_pages
+    )
+
+    return render_template(
+        'admin_logs.html',
+        admin_role=role,
+        admin_permissions=sorted(perms, key=lambda p: _permission_label_es(p)),
+        total_users=stats["total_users"],
+        total_chats=stats["total_chats"],
+        total_messages=stats["total_messages"],
+        total_admins=stats["total_admins"],
+        recent_admin_logs=recent_admin_logs,
+        q=q,
+        action=action,
+        date_from=(request.args.get("date_from") or ""),
+        date_to=(request.args.get("date_to") or ""),
+        per_page=per_page,
+        per_options=per_options,
+        logs_total=logs_total,
+        logs_pagination=logs_pagination,
+    )
+
+
+@app.route('/admin/seguridad')
+@login_required
+@admin_required(permission="view_security")
+def admin_security_page():
+    role = _effective_admin_role(current_user)
+    perms = _effective_admin_permissions(current_user)
+    stats = _admin_stats()
+    args = request.args.to_dict(flat=True)
+    per_options = [5, 10, 20, 50, 100]
+    login_attempts_all, reset_ip_all, rate_limit_all = _admin_security_data(limit=5000)
+
+    login_q = (request.args.get("login_q") or "").strip().lower()
+    if login_q:
+        login_attempts_all = [
+            r for r in login_attempts_all
+            if login_q in (r.ip or "").lower() or login_q in (r.email or "").lower() or login_q == str(r.id)
+        ]
+    reset_q = (request.args.get("reset_q") or "").strip().lower()
+    if reset_q:
+        reset_ip_all = [
+            r for r in reset_ip_all
+            if reset_q in (r.ip or "").lower() or reset_q == str(r.id)
+        ]
+    rate_q = (request.args.get("rate_q") or "").strip().lower()
+    if rate_q:
+        rate_limit_all = [
+            r for r in rate_limit_all
+            if rate_q in (r.key or "").lower() or rate_q == str(r.id)
+        ]
+
+    per_login = _safe_int(request.args.get("per_login"), 10)
+    if per_login not in per_options:
+        per_login = 10
+    page_login = _safe_int(request.args.get("page_login"), 1)
+    login_attempts, login_total, login_total_pages, page_login = _slice_with_pagination(
+        login_attempts_all, page_login, per_login
+    )
+    login_pagination = _build_pagination_links(
+        "admin_security_page", args, "page_login", "per_login", page_login, per_login, login_total_pages
+    )
+
+    per_reset = _safe_int(request.args.get("per_reset"), 10)
+    if per_reset not in per_options:
+        per_reset = 10
+    page_reset = _safe_int(request.args.get("page_reset"), 1)
+    reset_ip_rows, reset_total, reset_total_pages, page_reset = _slice_with_pagination(
+        reset_ip_all, page_reset, per_reset
+    )
+    reset_pagination = _build_pagination_links(
+        "admin_security_page", args, "page_reset", "per_reset", page_reset, per_reset, reset_total_pages
+    )
+
+    per_rate = _safe_int(request.args.get("per_rate"), 10)
+    if per_rate not in per_options:
+        per_rate = 10
+    page_rate = _safe_int(request.args.get("page_rate"), 1)
+    rate_limit_rows, rate_total, rate_total_pages, page_rate = _slice_with_pagination(
+        rate_limit_all, page_rate, per_rate
+    )
+    rate_pagination = _build_pagination_links(
+        "admin_security_page", args, "page_rate", "per_rate", page_rate, per_rate, rate_total_pages
+    )
+
+    return render_template(
+        'admin_security.html',
+        admin_role=role,
+        admin_permissions=sorted(perms, key=lambda p: _permission_label_es(p)),
+        total_users=stats["total_users"],
+        total_chats=stats["total_chats"],
+        total_messages=stats["total_messages"],
+        total_admins=stats["total_admins"],
+        login_attempts=login_attempts,
+        reset_ip_rows=reset_ip_rows,
+        rate_limit_rows=rate_limit_rows,
+        login_q=login_q,
+        reset_q=reset_q,
+        rate_q=rate_q,
+        per_options=per_options,
+        per_login=per_login,
+        per_reset=per_reset,
+        per_rate=per_rate,
+        login_total=login_total,
+        reset_total=reset_total,
+        rate_total=rate_total,
+        login_pagination=login_pagination,
+        reset_pagination=reset_pagination,
+        rate_pagination=rate_pagination,
+    )
+
+
+@app.route('/admin/reportes')
+@login_required
+@admin_required(permission="export_reports")
+def admin_reports_page():
+    role = _effective_admin_role(current_user)
+    perms = _effective_admin_permissions(current_user)
+    stats = _admin_stats()
+    return render_template(
+        'admin_reports.html',
+        admin_role=role,
+        admin_permissions=sorted(perms, key=lambda p: _permission_label_es(p)),
+        total_users=stats["total_users"],
+        total_chats=stats["total_chats"],
+        total_messages=stats["total_messages"],
+        total_admins=stats["total_admins"],
+    )
+
+
+def _build_xlsx_response(filename_base: str, sheet_name: str, headers: list, rows: list):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = (sheet_name or "Reporte")[:31]
+
+    ws.append(headers)
+    for row in rows:
+        ws.append(list(row))
+
+    header_fill = PatternFill(start_color="13233F", end_color="13233F", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+    center = Alignment(vertical="top", wrap_text=True)
+
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center
+
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        for cell in row:
+            cell.alignment = center
+
+    for idx, _ in enumerate(headers, start=1):
+        max_len = len(str(headers[idx - 1]))
+        for row_idx in range(2, ws.max_row + 1):
+            val = ws.cell(row=row_idx, column=idx).value
+            val_len = len(str(val)) if val is not None else 0
+            if val_len > max_len:
+                max_len = val_len
+        ws.column_dimensions[get_column_letter(idx)].width = min(max_len + 2, 52)
+
+    out = BytesIO()
+    wb.save(out)
+    out.seek(0)
+
+    filename = f"{filename_base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return Response(
+        out.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.route('/admin/export/usuarios.xlsx')
+@login_required
+@admin_required(permission="export_reports")
+def admin_export_users_xlsx():
+    rows = _admin_users_data()
+    headers = ["ID", "Nombre", "Email", "Registro", "Activa", "Chats", "Mensajes"]
+    values = []
+    for u in rows:
+        values.append([
+            u.id,
+            u.name or "",
+            u.email or "",
+            u.created_at.strftime('%Y-%m-%d %H:%M:%S') if u.created_at else "",
+            "Si" if bool(u.is_active_account) else "No",
+            int(u.chat_count or 0),
+            int(u.message_count or 0),
+        ])
+    return _build_xlsx_response("usuarios_nexus", "Usuarios", headers, values)
+
+
+@app.route('/admin/export/login_attempts.xlsx')
+@login_required
+@admin_required(permission="export_reports")
+def admin_export_login_attempts_xlsx():
+    rows, _, _ = _admin_security_data(limit=5000)
+    headers = ["ID", "IP", "Email", "Intentos", "Primer intento", "Bloqueado hasta"]
+    values = []
+    for r in rows:
+        values.append([
+            r.id,
+            r.ip or "",
+            r.email or "",
+            int(r.attempts or 0),
+            r.first_attempt_at.strftime('%Y-%m-%d %H:%M:%S') if r.first_attempt_at else "",
+            r.blocked_until.strftime('%Y-%m-%d %H:%M:%S') if r.blocked_until else "",
+        ])
+    return _build_xlsx_response("seguridad_login_attempts", "LoginAttempts", headers, values)
+
+
+@app.route('/admin/export/auditoria.xlsx')
+@login_required
+@admin_required(permission="export_reports")
+def admin_export_audit_xlsx():
+    rows = _admin_recent_logs(limit=2000)
+    headers = ["Fecha", "Actor email", "Accion", "Usuario objetivo", "Detalle", "IP"]
+    values = []
+    for log_row, actor_user in rows:
+        values.append([
+            log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else "",
+            actor_user.email if actor_user else "",
+            log_row.action or "",
+            log_row.target_user_id or "",
+            (log_row.detail or "").replace("\n", " ").replace("\r", " "),
+            log_row.ip or "",
+        ])
+    return _build_xlsx_response("auditoria_admin", "Auditoria", headers, values)
+
+
+@app.route('/admin/export/usuarios.json')
+@login_required
+@admin_required(permission="export_reports")
+def admin_export_users_json():
+    rows = _admin_users_data()
+    return jsonify({
+        "success": True,
+        "title": "Usuarios Nexus",
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "sections": [
+            {
+                "title": "Usuarios",
+                "columns": ["ID", "Nombre", "Email", "Registro", "Estado", "Chats", "Mensajes"],
+                "rows": [
+                    [
+                        u.id,
+                        u.name or "",
+                        u.email or "",
+                        u.created_at.strftime('%Y-%m-%d %H:%M:%S') if u.created_at else "-",
+                        "Activa" if bool(u.is_active_account) else "Desactivada",
+                        int(u.chat_count or 0),
+                        int(u.message_count or 0),
+                    ]
+                    for u in rows
+                ],
+            }
+        ],
+    })
+
+
+@app.route('/admin/export/auditoria.json')
+@login_required
+@admin_required(permission="export_reports")
+def admin_export_audit_json():
+    rows = _admin_recent_logs(limit=5000)
+    return jsonify({
+        "success": True,
+        "title": "Auditoria administrativa",
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "sections": [
+            {
+                "title": "Eventos de auditoria",
+                "columns": ["Fecha", "Actor", "Accion", "Usuario objetivo", "Detalle", "IP"],
+                "rows": [
+                    [
+                        log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else "-",
+                        actor_user.email if actor_user else "-",
+                        log_row.action or "-",
+                        log_row.target_user_id or "-",
+                        (log_row.detail or "-").replace("\n", " ").replace("\r", " "),
+                        log_row.ip or "-",
+                    ]
+                    for log_row, actor_user in rows
+                ],
+            }
+        ],
+    })
+
+
+@app.route('/admin/export/seguridad.json')
+@login_required
+@admin_required(permission="export_reports")
+def admin_export_security_json():
+    login_rows, reset_rows, rate_rows = _admin_security_data(limit=5000)
+    return jsonify({
+        "success": True,
+        "title": "Reporte de seguridad",
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "sections": [
+            {
+                "title": "Intentos de login",
+                "columns": ["ID", "IP", "Email", "Intentos", "Primer intento", "Bloqueado hasta"],
+                "rows": [
+                    [
+                        r.id,
+                        r.ip or "-",
+                        r.email or "-",
+                        r.attempts or 0,
+                        r.first_attempt_at.strftime('%Y-%m-%d %H:%M:%S') if r.first_attempt_at else "-",
+                        r.blocked_until.strftime('%Y-%m-%d %H:%M:%S') if r.blocked_until else "-",
+                    ]
+                    for r in login_rows
+                ],
+            },
+            {
+                "title": "Reset por IP",
+                "columns": ["IP", "Intentos", "Primer intento", "Bloqueado hasta"],
+                "rows": [
+                    [
+                        r.ip or "-",
+                        r.attempts or 0,
+                        r.first_attempt_at.strftime('%Y-%m-%d %H:%M:%S') if r.first_attempt_at else "-",
+                        r.blocked_until.strftime('%Y-%m-%d %H:%M:%S') if r.blocked_until else "-",
+                    ]
+                    for r in reset_rows
+                ],
+            },
+            {
+                "title": "Rate limits",
+                "columns": ["Key", "Count", "Ventana", "Bloqueado hasta"],
+                "rows": [
+                    [
+                        r.key or "-",
+                        r.count or 0,
+                        r.window_start.strftime('%Y-%m-%d %H:%M:%S') if r.window_start else "-",
+                        r.blocked_until.strftime('%Y-%m-%d %H:%M:%S') if r.blocked_until else "-",
+                    ]
+                    for r in rate_rows
+                ],
+            },
+        ],
+    })
+
+
+@app.route('/admin/grant', methods=['POST'])
+@login_required
+@admin_required(super_only=True)
+def admin_grant():
+    email = _normalize_email(request.form.get('email'))
+    role = (request.form.get('role') or "admin").strip().lower()
+    requested_permissions = set(request.form.getlist('permissions'))
+
+    if not email:
+        flash("Debes escribir un correo para asignar permisos.", "error")
+        return redirect(url_for('admin_admins_page'))
+
+    user = User.query.filter(func.lower(User.email) == email).first()
+    if not user:
+        flash("No existe un usuario con ese correo.", "error")
+        return redirect(url_for('admin_admins_page'))
+
+    if role not in {"admin", "super_admin"}:
+        flash("Rol inválido.", "error")
+        return redirect(url_for('admin_admins_page'))
+
+    if role == "super_admin" and not _is_super_admin_email(user.email):
+        flash("Solo correos de SUPER_ADMIN_EMAILS pueden ser super admin.", "error")
+        return redirect(url_for('admin_admins_page'))
+
+    if role == "super_admin":
+        granted_permissions = set(ALL_ADMIN_PERMISSIONS)
+    else:
+        granted_permissions = {p for p in requested_permissions if p in ALL_ADMIN_PERMISSIONS}
+        if not granted_permissions:
+            granted_permissions = set(DEFAULT_ADMIN_PERMISSIONS)
+
+    rec = AdminRole.query.filter_by(user_id=user.id).first()
+    if not rec:
+        rec = AdminRole(
+            user_id=user.id,
+            role=role,
+            permissions_json=_dumps_permissions(granted_permissions),
+            is_active=True,
+            granted_by_user_id=current_user.id,
+        )
+        db.session.add(rec)
+    else:
+        rec.role = role
+        rec.permissions_json = _dumps_permissions(granted_permissions)
+        rec.is_active = True
+        rec.granted_by_user_id = current_user.id
+        rec.updated_at = utcnow_naive()
+
+    db.session.commit()
+    _add_admin_audit(
+        "admin_grant",
+        target_user_id=user.id,
+        detail=f"email={user.email}; role={role}; permissions={sorted(granted_permissions)}",
+    )
+    flash("Permisos de administrador actualizados.", "success")
+    return redirect(url_for('admin_admins_page'))
+
+
+@app.route('/admin/revoke/<int:user_id>', methods=['POST'])
+@login_required
+@admin_required(super_only=True)
+def admin_revoke(user_id):
+    if user_id == current_user.id:
+        flash("No puedes revocar tu propio acceso desde aquí.", "error")
+        return redirect(url_for('admin_admins_page'))
+
+    user = db.session.get(User, user_id)
+    if not user:
+        flash("Usuario no encontrado.", "error")
+        return redirect(url_for('admin_admins_page'))
+
+    if _is_super_admin_email(user.email):
+        flash("No puedes revocar un super admin por correo protegido.", "error")
+        return redirect(url_for('admin_admins_page'))
+
+    rec = AdminRole.query.filter_by(user_id=user_id).first()
+    if not rec:
+        flash("Ese usuario no tiene rol admin asignado.", "error")
+        return redirect(url_for('admin_admins_page'))
+
+    rec.is_active = False
+    rec.updated_at = utcnow_naive()
+    db.session.commit()
+    _add_admin_audit("admin_revoke", target_user_id=user.id, detail=f"email={user.email}")
+    flash("Acceso admin revocado.", "success")
+    return redirect(url_for('admin_admins_page'))
+
+
+@app.route('/admin/user_status/<int:user_id>', methods=['POST'])
+@login_required
+@admin_required(permission="manage_users")
+def admin_user_status(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        flash("Usuario no encontrado.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    if user.id == current_user.id:
+        flash("No puedes desactivar tu propia cuenta desde el panel.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    if _is_super_admin_email(user.email) and _effective_admin_role(current_user) != "super_admin":
+        flash("Solo el super admin puede cambiar esta cuenta.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    action = (request.form.get("action") or "").strip().lower()
+    if action == "deactivate":
+        user.is_active_account = False
+        msg = "Cuenta desactivada."
+    elif action == "activate":
+        user.is_active_account = True
+        msg = "Cuenta activada."
+    else:
+        flash("Accion invalida.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    db.session.commit()
+    _add_admin_audit("user_status_change", target_user_id=user.id, detail=f"email={user.email}; action={action}")
+    flash(msg, "success")
+    return redirect(url_for('admin_users_page'))
+
+
+@app.route('/admin/user_delete/<int:user_id>', methods=['POST'])
+@login_required
+@admin_required(super_only=True)
+def admin_user_delete(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        flash("Usuario no encontrado.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    if user.id == current_user.id:
+        flash("No puedes eliminar tu propia cuenta.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    if _is_super_admin_email(user.email):
+        flash("No puedes eliminar un super admin protegido.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    convs = Conversation.query.filter_by(user_id=user.id).all()
+    conv_ids = [c.id for c in convs]
+
+    if conv_ids:
+        SharedConversation.query.filter(SharedConversation.conversation_id.in_(conv_ids)).delete(
+            synchronize_session=False
+        )
+    SharedConversation.query.filter_by(owner_id=user.id).delete(synchronize_session=False)
+    SavedMessage.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+    AdminRole.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+    AdminAuditLog.query.filter(
+        (AdminAuditLog.actor_user_id == user.id) | (AdminAuditLog.target_user_id == user.id)
+    ).delete(synchronize_session=False)
+    Message.query.filter(Message.conversation_id.in_(conv_ids)).delete(synchronize_session=False) if conv_ids else None
+    Conversation.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+
+    db.session.delete(user)
+    db.session.commit()
+
+    _add_admin_audit("user_delete", target_user_id=user_id, detail=f"user_id={user_id}")
+    flash("Usuario eliminado correctamente.", "success")
+    return redirect(url_for('admin_users_page'))
 
 
 @app.route('/new_chat')

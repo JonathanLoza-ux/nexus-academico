@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Logs - Nexus</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/nexus-brain.svg') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+</head>
+<body class="admin-page">
+    <div class="admin-shell">
+        <header class="admin-topbar">
+            <div class="admin-brand">
+                <i class="fas fa-shield-alt"></i>
+                <div>
+                    <h1>Logs de administracion</h1>
+                    <p>Eventos y acciones recientes del panel</p>
+                </div>
+            </div>
+            <div class="admin-top-actions">
+                <a class="admin-btn" href="{{ url_for('admin_panel') }}"><i class="fas fa-chart-line"></i> Dashboard</a>
+                {% if 'manage_admins' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_admins_page') }}"><i class="fas fa-user-shield"></i> Admins</a>
+                {% endif %}
+                {% if 'view_users' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_users_page') }}"><i class="fas fa-users"></i> Usuarios</a>
+                {% endif %}
+                {% if 'view_security' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_security_page') }}"><i class="fas fa-lock"></i> Seguridad</a>
+                {% endif %}
+                {% if 'export_reports' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_reports_page') }}"><i class="fas fa-file-export"></i> Reportes</a>
+                {% endif %}
+                <a class="admin-btn" href="{{ url_for('home') }}"><i class="fas fa-arrow-left"></i> Chat</a>
+            </div>
+        </header>
+
+        <section class="admin-kpi-grid">
+            <article class="admin-kpi-card"><span>Usuarios</span><strong>{{ total_users }}</strong></article>
+            <article class="admin-kpi-card"><span>Chats</span><strong>{{ total_chats }}</strong></article>
+            <article class="admin-kpi-card"><span>Mensajes</span><strong>{{ total_messages }}</strong></article>
+            <article class="admin-kpi-card"><span>Admins activos</span><strong>{{ total_admins }}</strong></article>
+        </section>
+
+        <section class="admin-panel-card">
+            <h2>Auditoria del panel</h2>
+
+            <form method="GET" action="{{ url_for('admin_logs_page') }}" class="admin-filters">
+                <input type="text" name="q" placeholder="Buscar por ID, actor, accion, detalle o usuario objetivo" value="{{ q }}" />
+                <input type="text" name="action" placeholder="Filtrar por accion" value="{{ action }}" />
+                <input type="date" name="date_from" value="{{ date_from }}" />
+                <input type="date" name="date_to" value="{{ date_to }}" />
+                <select name="per_page">
+                    {% for n in per_options %}
+                    <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }} por pagina</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="admin-btn"><i class="fas fa-search"></i> Filtrar</button>
+                <a href="{{ url_for('admin_logs_page') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
+            </form>
+
+            {% if 'export_reports' in admin_permissions %}
+            <div style="display:flex; gap:8px; margin-bottom:10px;">
+                <a class="admin-btn" href="{{ url_for('admin_export_audit_xlsx') }}">
+                    <i class="fas fa-file-excel"></i> Exportar Excel (.xlsx)
+                </a>
+            </div>
+            {% endif %}
+
+            <div class="admin-table-wrap">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Accion</th>
+                            <th>Actor</th>
+                            <th>Detalle</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for log_row, actor_user in recent_admin_logs %}
+                        <tr>
+                            <td>{{ log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else '-' }}</td>
+                            <td>{{ log_row.action }}</td>
+                            <td>{{ actor_user.email if actor_user else '-' }}</td>
+                            <td>
+                                <button
+                                    type="button"
+                                    class="admin-btn"
+                                    data-id="{{ log_row.id }}"
+                                    data-date="{{ log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else '-' }}"
+                                    data-actor="{{ actor_user.email if actor_user else '-' }}"
+                                    data-action="{{ log_row.action or '-' }}"
+                                    data-detail="{{ log_row.detail or '-' }}"
+                                    data-ip="{{ log_row.ip or '-' }}"
+                                    data-target-user="{{ log_row.target_user_id or '-' }}"
+                                    onclick="openLogDetail(this)"
+                                >
+                                    <i class="fas fa-eye"></i> Ver detalle
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="admin-pagination-wrap">
+                <span>Total eventos: {{ logs_total }}</span>
+                <div class="admin-pagination">
+                    {% if logs_pagination.prev_url %}
+                    <a class="admin-btn" href="{{ logs_pagination.prev_url }}">Anterior</a>
+                    {% endif %}
+                    {% for p in logs_pagination.pages %}
+                        {% if p.current %}
+                        <span class="admin-page-current">{{ p.num }}</span>
+                        {% else %}
+                        <a class="admin-btn" href="{{ p.url }}">{{ p.num }}</a>
+                        {% endif %}
+                    {% endfor %}
+                    {% if logs_pagination.next_url %}
+                    <a class="admin-btn" href="{{ logs_pagination.next_url }}">Siguiente</a>
+                    {% endif %}
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <div id="logDetailModal" class="admin-modal">
+        <div class="admin-modal-content">
+            <div class="admin-modal-header">
+                <h3>Detalle de evento</h3>
+                <button type="button" class="admin-btn" onclick="closeAdminModal('logDetailModal')">Cerrar</button>
+            </div>
+            <div class="admin-modal-body">
+                <p><strong>ID:</strong> <span id="logDetailId">-</span></p>
+                <p><strong>Fecha:</strong> <span id="logDetailDate">-</span></p>
+                <p><strong>Actor:</strong> <span id="logDetailActor">-</span></p>
+                <p><strong>Accion:</strong> <span id="logDetailAction">-</span></p>
+                <p><strong>Usuario objetivo:</strong> <span id="logDetailTargetUser">-</span></p>
+                <p><strong>IP:</strong> <span id="logDetailIp">-</span></p>
+                <p><strong>Detalle:</strong></p>
+                <pre id="logDetailText" class="admin-code-block">-</pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openAdminModal(id){
+            const el = document.getElementById(id);
+            if (el) el.classList.add('show');
+        }
+        function closeAdminModal(id){
+            const el = document.getElementById(id);
+            if (el) el.classList.remove('show');
+        }
+        function openLogDetail(btn){
+            document.getElementById('logDetailId').textContent = btn.dataset.id || '-';
+            document.getElementById('logDetailDate').textContent = btn.dataset.date || '-';
+            document.getElementById('logDetailActor').textContent = btn.dataset.actor || '-';
+            document.getElementById('logDetailAction').textContent = btn.dataset.action || '-';
+            document.getElementById('logDetailTargetUser').textContent = btn.dataset.targetUser || '-';
+            document.getElementById('logDetailIp').textContent = btn.dataset.ip || '-';
+            document.getElementById('logDetailText').textContent = btn.dataset.detail || '-';
+            openAdminModal('logDetailModal');
+        }
+        document.addEventListener('click', function(e){
+            if (e.target.classList.contains('admin-modal')) {
+                e.target.classList.remove('show');
+            }
+        });
+        document.addEventListener('keydown', function(e){
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.admin-modal.show').forEach(m => m.classList.remove('show'));
+            }
+        });
+    </script>
+</body>
+</html>

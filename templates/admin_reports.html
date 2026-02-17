@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reportes - Nexus</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/nexus-brain.svg') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+</head>
+<body class="admin-page">
+    <div class="admin-shell">
+        <header class="admin-topbar">
+            <div class="admin-brand">
+                <i class="fas fa-shield-alt"></i>
+                <div>
+                    <h1>Reportes</h1>
+                    <p>Exportaciones para analisis y respaldo</p>
+                </div>
+            </div>
+            <div class="admin-top-actions">
+                <a class="admin-btn" href="{{ url_for('admin_panel') }}"><i class="fas fa-chart-line"></i> Dashboard</a>
+                {% if 'view_logs' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_logs_page') }}"><i class="fas fa-clipboard-list"></i> Logs</a>
+                {% endif %}
+                {% if 'view_users' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_users_page') }}"><i class="fas fa-users"></i> Usuarios</a>
+                {% endif %}
+                <a class="admin-btn" href="{{ url_for('home') }}"><i class="fas fa-arrow-left"></i> Chat</a>
+            </div>
+        </header>
+
+        <section class="admin-kpi-grid">
+            <article class="admin-kpi-card"><span>Usuarios</span><strong>{{ total_users }}</strong></article>
+            <article class="admin-kpi-card"><span>Chats</span><strong>{{ total_chats }}</strong></article>
+            <article class="admin-kpi-card"><span>Mensajes</span><strong>{{ total_messages }}</strong></article>
+            <article class="admin-kpi-card"><span>Admins activos</span><strong>{{ total_admins }}</strong></article>
+        </section>
+
+        <section class="admin-grid-two">
+            <article class="admin-panel-card">
+                <h2>Usuarios</h2>
+                <p style="color: var(--muted);">Incluye estado de cuenta, chats y mensajes por usuario.</p>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button class="admin-btn primary" type="button" onclick="exportAdminPdf('usuarios')">
+                        <i class="fas fa-file-pdf"></i> Exportar PDF
+                    </button>
+                    <a class="admin-btn" href="{{ url_for('admin_export_users_xlsx') }}">
+                        <i class="fas fa-file-excel"></i> Excel (.xlsx)
+                    </a>
+                </div>
+            </article>
+
+            <article class="admin-panel-card">
+                <h2>Auditoria admin</h2>
+                <p style="color: var(--muted);">Incluye acciones administrativas con actor y detalle.</p>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button class="admin-btn primary" type="button" onclick="exportAdminPdf('auditoria')">
+                        <i class="fas fa-file-pdf"></i> Exportar PDF
+                    </button>
+                    <a class="admin-btn" href="{{ url_for('admin_export_audit_xlsx') }}">
+                        <i class="fas fa-file-excel"></i> Excel (.xlsx)
+                    </a>
+                </div>
+            </article>
+
+            <article class="admin-panel-card">
+                <h2>Seguridad</h2>
+                <p style="color: var(--muted);">Intentos de login, reset por IP y rate limits.</p>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button class="admin-btn primary" type="button" onclick="exportAdminPdf('seguridad')">
+                        <i class="fas fa-file-pdf"></i> Exportar PDF
+                    </button>
+                    <a class="admin-btn" href="{{ url_for('admin_export_login_attempts_xlsx') }}">
+                        <i class="fas fa-file-excel"></i> Excel (.xlsx)
+                    </a>
+                </div>
+            </article>
+        </section>
+    </div>
+
+    <script>
+        function escapeHtml(value) {
+            return String(value ?? "").replace(/[&<>"']/g, function(ch){
+                return ({
+                    "&": "&amp;",
+                    "<": "&lt;",
+                    ">": "&gt;",
+                    "\"": "&quot;",
+                    "'": "&#39;"
+                })[ch];
+            });
+        }
+
+        function showPreparingPopup(message) {
+            const popup = window.open("", "_blank");
+            if (!popup) return null;
+            popup.document.open();
+            popup.document.write('<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Preparando PDF...</title><style>body{font-family:Segoe UI,system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;height:100vh;margin:0}.card{border:1px solid #334155;border-radius:12px;padding:18px;background:#1e293b}</style></head><body><div class="card">' + escapeHtml(message) + '</div></body></html>');
+            popup.document.close();
+            return popup;
+        }
+
+        function buildAdminPdfHtml(payload) {
+            const sections = Array.isArray(payload.sections) ? payload.sections : [];
+            const maxColumns = sections.reduce((acc, sec) => {
+                const c = Array.isArray(sec.columns) ? sec.columns.length : 0;
+                return Math.max(acc, c);
+            }, 0);
+            const pageSize = maxColumns >= 6 ? "A4 landscape" : "A4 portrait";
+
+            const sectionsHtml = sections.map((sec, idx) => {
+                const columns = Array.isArray(sec.columns) ? sec.columns : [];
+                const rows = Array.isArray(sec.rows) ? sec.rows : [];
+                const head = columns.map(c => '<th>' + escapeHtml(c) + '</th>').join('');
+                const body = rows.map(r => {
+                    const cells = Array.isArray(r) ? r : [];
+                    return '<tr>' + cells.map(v => '<td>' + escapeHtml(v) + '</td>').join('') + '</tr>';
+                }).join('');
+                const sectionClass = idx > 0 ? 'report-section page-break' : 'report-section';
+                return `
+                    <section class="${sectionClass}">
+                        <h2>${escapeHtml(sec.title || 'Seccion')}</h2>
+                        <div class="table-wrap">
+                            <table>
+                                <thead><tr>${head}</tr></thead>
+                                <tbody>${body || '<tr><td colspan="' + Math.max(columns.length, 1) + '">Sin datos</td></tr>'}</tbody>
+                            </table>
+                        </div>
+                    </section>
+                `;
+            }).join('');
+
+            return `<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${escapeHtml(payload.title || 'Reporte')}</title>
+    <style>
+        :root { --bg:#f8fafc; --card:#ffffff; --text:#0f172a; --muted:#475569; --border:#dbe5f1; --accent:#0ea5e9; }
+        * { box-sizing: border-box; }
+        body { font-family:"Segoe UI",system-ui,sans-serif; margin:0; background:var(--bg); color:var(--text); padding:24px; }
+        .sheet { border:1px solid #d5e2ef; border-radius:16px; background:#fff; padding:18px; box-shadow:0 12px 28px rgba(15,23,42,.08); }
+        .brand { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+        .brand-left { display:flex; align-items:center; gap:10px; color:#0284c7; font-weight:800; letter-spacing:.2px; }
+        .mark { width:26px; height:26px; border-radius:999px; background:#e0f2fe; border:1px solid #bae6fd; display:grid; place-items:center; color:#0369a1; font-size:13px; }
+        h1 { margin:0 0 8px; font-size:1.45rem; }
+        .meta { color:var(--muted); margin-bottom:14px; }
+        .report-section { margin-top:14px; page-break-inside:avoid; }
+        .report-section h2 { margin:0 0 8px; font-size:1.1rem; }
+        .table-wrap { border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+        table { width:100%; border-collapse:collapse; table-layout:fixed; }
+        th, td {
+            border:1px solid var(--border);
+            padding:8px 10px;
+            text-align:left;
+            vertical-align:top;
+            white-space:normal;
+            word-break:break-word;
+            overflow-wrap:anywhere;
+            font-size:12px;
+        }
+        th { background:#f1f5f9; font-weight:700; }
+        .pdf-watermark { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) rotate(-24deg); opacity:.08; font-size:48px; font-weight:800; color:#0f172a; pointer-events:none; white-space:nowrap; }
+        .pdf-footer { position:fixed; bottom:8px; right:12px; font-size:11px; color:#64748b; }
+        .page-break { page-break-before: always; }
+        @media print {
+            @page { size:${pageSize}; margin:10mm; }
+            body { padding:0; }
+            .sheet { border:none; box-shadow:none; border-radius:0; padding:0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="pdf-watermark">© 2026 Jonathan Loza</div>
+    <div class="pdf-footer">© 2026 Jonathan Loza · Nexus Academy</div>
+    <main class="sheet">
+        <div class="brand">
+            <div class="brand-left"><span class="mark">N</span> NEXUS ACADEMY</div>
+            <div style="color:#64748b;font-size:12px;">${escapeHtml(maxColumns >= 6 ? 'A4 Horizontal' : 'A4 Vertical')}</div>
+        </div>
+        <h1>${escapeHtml(payload.title || 'Reporte')}</h1>
+        <div class="meta">Exportado: ${escapeHtml(payload.generated_at || '')}</div>
+        ${sectionsHtml}
+    </main>
+    <script>
+        window.focus();
+        window.print();
+    <\/script>
+</body>
+</html>`;
+        }
+
+        async function exportAdminPdf(type) {
+            const endpointMap = {
+                usuarios: "/admin/export/usuarios.json",
+                auditoria: "/admin/export/auditoria.json",
+                seguridad: "/admin/export/seguridad.json"
+            };
+            const labelMap = {
+                usuarios: "Preparando PDF de usuarios...",
+                auditoria: "Preparando PDF de auditoria...",
+                seguridad: "Preparando PDF de seguridad..."
+            };
+            const endpoint = endpointMap[type];
+            if (!endpoint) return;
+
+            const popup = showPreparingPopup(labelMap[type] || "Preparando PDF...");
+            if (!popup) {
+                alert("No se pudo abrir el exportador de PDF. Revisa el bloqueador de ventanas.");
+                return;
+            }
+            try {
+                const res = await fetch(endpoint, { method: "GET" });
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                    throw new Error(data.error || "No se pudo generar el reporte.");
+                }
+                const html = buildAdminPdfHtml(data);
+                popup.document.open();
+                popup.document.write(html);
+                popup.document.close();
+            } catch (err) {
+                popup.document.open();
+                popup.document.write('<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Error</title><style>body{font-family:Segoe UI,system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;height:100vh;margin:0}.card{max-width:560px;border:1px solid #334155;border-radius:12px;padding:18px;background:#1e293b}</style></head><body><div class="card"><strong>No se pudo generar el PDF.</strong><br><br>' + escapeHtml(err.message || "Error desconocido") + '</div></body></html>');
+                popup.document.close();
+            }
+        }
+    </script>
+</body>
+</html>

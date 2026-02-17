@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Panel Admin - Nexus</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/nexus-brain.svg') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="admin-page">
+    <div class="admin-shell">
+        <header class="admin-topbar">
+            <div class="admin-brand">
+                <i class="fas fa-shield-alt"></i>
+                <div>
+                    <h1>Panel de Administracion</h1>
+                    <p>
+                        Sesion: {{ current_user.name }}
+                        {% if admin_role == "super_admin" %}(Super Admin){% else %}(Admin){% endif %}
+                    </p>
+                </div>
+            </div>
+            <div class="admin-top-actions">
+                {% if 'manage_admins' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_admins_page') }}"><i class="fas fa-user-shield"></i> Admins</a>
+                {% endif %}
+                {% if 'view_users' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_users_page') }}"><i class="fas fa-users"></i> Usuarios</a>
+                {% endif %}
+                {% if 'view_logs' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_logs_page') }}"><i class="fas fa-clipboard-list"></i> Logs</a>
+                {% endif %}
+                {% if 'view_security' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_security_page') }}"><i class="fas fa-lock"></i> Seguridad</a>
+                {% endif %}
+                {% if 'export_reports' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_reports_page') }}"><i class="fas fa-file-export"></i> Reportes</a>
+                {% endif %}
+                <a class="admin-btn" href="{{ url_for('home') }}"><i class="fas fa-arrow-left"></i> Volver al chat</a>
+            </div>
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <section class="admin-flashes">
+                    {% for category, message in messages %}
+                        <div class="admin-flash {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </section>
+            {% endif %}
+        {% endwith %}
+
+        <section class="admin-kpi-grid">
+            <article class="admin-kpi-card"><span>Usuarios</span><strong>{{ total_users }}</strong></article>
+            <article class="admin-kpi-card"><span>Chats</span><strong>{{ total_chats }}</strong></article>
+            <article class="admin-kpi-card"><span>Mensajes</span><strong>{{ total_messages }}</strong></article>
+            <article class="admin-kpi-card"><span>Admins activos</span><strong>{{ total_admins }}</strong></article>
+        </section>
+
+        <section class="admin-grid-two">
+            {% if 'view_users' in admin_permissions %}
+            <article class="admin-panel-card">
+                <h2>Usuarios</h2>
+                <p style="color:var(--muted);">Gestionar estado de cuentas, actividad y eliminacion (solo super admin).</p>
+                <a class="admin-btn primary" href="{{ url_for('admin_users_page') }}">
+                    <i class="fas fa-users"></i> Ir a Usuarios
+                </a>
+            </article>
+            {% endif %}
+
+            {% if 'manage_admins' in admin_permissions %}
+            <article class="admin-panel-card">
+                <h2>Admins y permisos</h2>
+                <p style="color:var(--muted);">Asignar roles, ajustar permisos y revisar auditoria administrativa.</p>
+                <a class="admin-btn primary" href="{{ url_for('admin_admins_page') }}">
+                    <i class="fas fa-user-shield"></i> Ir a Admins
+                </a>
+            </article>
+            {% endif %}
+
+            {% if 'view_logs' in admin_permissions %}
+            <article class="admin-panel-card">
+                <h2>Logs</h2>
+                <p style="color:var(--muted);">Revisar eventos recientes del panel y acciones ejecutadas.</p>
+                <a class="admin-btn primary" href="{{ url_for('admin_logs_page') }}">
+                    <i class="fas fa-clipboard-list"></i> Ir a Logs
+                </a>
+            </article>
+            {% endif %}
+
+            {% if 'view_security' in admin_permissions %}
+            <article class="admin-panel-card">
+                <h2>Seguridad</h2>
+                <p style="color:var(--muted);">Intentos de login, reset por IP y reglas de rate limit.</p>
+                <a class="admin-btn primary" href="{{ url_for('admin_security_page') }}">
+                    <i class="fas fa-lock"></i> Ir a Seguridad
+                </a>
+            </article>
+            {% endif %}
+        </section>
+
+        <section class="admin-panel-card">
+            <h2>Grafica: Top usuarios por chats</h2>
+            <div style="height: 280px;">
+                <canvas id="adminTopChatsChart"></canvas>
+            </div>
+        </section>
+
+        <section class="admin-grid-two">
+            <article class="admin-panel-card">
+                <h2>Mensajes por dia (ultimos 7 dias)</h2>
+                <div style="height: 260px;">
+                    <canvas id="adminMessagesByDayChart"></canvas>
+                </div>
+            </article>
+            <article class="admin-panel-card">
+                <h2>Cuentas activas vs desactivadas</h2>
+                <div style="height: 260px;">
+                    <canvas id="adminAccountStatusChart"></canvas>
+                </div>
+            </article>
+        </section>
+
+        <section class="admin-panel-card">
+            <h2>Intentos fallidos por IP (top)</h2>
+            <div style="height: 260px;">
+                <canvas id="adminFailedIpChart"></canvas>
+            </div>
+        </section>
+    </div>
+    <script>
+        (function(){
+            const el = document.getElementById('adminTopChatsChart');
+            if (!el) return;
+            const labels = {{ top_chat_labels | tojson }};
+            const values = {{ top_chat_values | tojson }};
+            if (!labels.length) return;
+            new Chart(el, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'Chats',
+                        data: values,
+                        borderRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.06)' } },
+                        y: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.06)' }, beginAtZero: true }
+                    }
+                }
+            });
+        })();
+
+        (function(){
+            const el = document.getElementById('adminMessagesByDayChart');
+            if (!el) return;
+            const labels = {{ message_day_labels | tojson }};
+            const values = {{ message_day_values | tojson }};
+            new Chart(el, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'Mensajes',
+                        data: values,
+                        borderColor: '#22d3ee',
+                        backgroundColor: 'rgba(34,211,238,0.12)',
+                        fill: true,
+                        tension: 0.25
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: true } },
+                    scales: {
+                        x: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.06)' } },
+                        y: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.06)' }, beginAtZero: true }
+                    }
+                }
+            });
+        })();
+
+        (function(){
+            const el = document.getElementById('adminAccountStatusChart');
+            if (!el) return;
+            const labels = {{ account_status_labels | tojson }};
+            const values = {{ account_status_values | tojson }};
+            new Chart(el, {
+                type: 'doughnut',
+                data: {
+                    labels,
+                    datasets: [{
+                        data: values,
+                        backgroundColor: ['#22c55e', '#ef4444'],
+                        borderColor: ['#16a34a', '#dc2626'],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#9fb0c8' }
+                        }
+                    }
+                }
+            });
+        })();
+
+        (function(){
+            const el = document.getElementById('adminFailedIpChart');
+            if (!el) return;
+            const labels = {{ failed_ip_labels | tojson }};
+            const values = {{ failed_ip_values | tojson }};
+            if (!labels.length) {
+                return;
+            }
+            new Chart(el, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'Intentos',
+                        data: values,
+                        borderRadius: 8,
+                        backgroundColor: '#f97316'
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.06)' }, beginAtZero: true },
+                        y: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.06)' } }
+                    }
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

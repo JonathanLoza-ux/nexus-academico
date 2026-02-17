@@ -49,6 +49,13 @@
                         <a class="link-soft" href="{{ url_for('forgot_password') }}">¿Olvidaste tu contraseña?</a>
                     </div>
                 {% endif %}
+                {% if show_inactive_support and support_whatsapp_link %}
+                    <div class="forgot-center" style="margin-top: 8px;">
+                        <a class="link-soft" href="{{ support_whatsapp_link }}" target="_blank">
+                            Contactar soporte por WhatsApp
+                        </a>
+                    </div>
+                {% endif %}
                 <button type="submit" class="submit-btn">Entrar</button>
             </form>
 

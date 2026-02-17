@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admins - Nexus</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/nexus-brain.svg') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+</head>
+<body class="admin-page">
+    <div class="admin-shell">
+        <header class="admin-topbar">
+            <div class="admin-brand">
+                <i class="fas fa-shield-alt"></i>
+                <div>
+                    <h1>Administradores</h1>
+                    <p>Gestion de roles y permisos</p>
+                </div>
+            </div>
+            <div class="admin-top-actions">
+                <a class="admin-btn" href="{{ url_for('admin_panel') }}"><i class="fas fa-chart-line"></i> Dashboard</a>
+                <a class="admin-btn" href="{{ url_for('admin_users_page') }}"><i class="fas fa-users"></i> Usuarios</a>
+                <a class="admin-btn" href="{{ url_for('admin_logs_page') }}"><i class="fas fa-clipboard-list"></i> Logs</a>
+                <a class="admin-btn" href="{{ url_for('admin_security_page') }}"><i class="fas fa-lock"></i> Seguridad</a>
+                <a class="admin-btn" href="{{ url_for('admin_reports_page') }}"><i class="fas fa-file-export"></i> Reportes</a>
+                <a class="admin-btn" href="{{ url_for('home') }}"><i class="fas fa-arrow-left"></i> Chat</a>
+            </div>
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <section class="admin-flashes">
+                    {% for category, message in messages %}
+                        <div class="admin-flash {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </section>
+            {% endif %}
+        {% endwith %}
+
+        <section class="admin-kpi-grid">
+            <article class="admin-kpi-card"><span>Usuarios</span><strong>{{ total_users }}</strong></article>
+            <article class="admin-kpi-card"><span>Chats</span><strong>{{ total_chats }}</strong></article>
+            <article class="admin-kpi-card"><span>Mensajes</span><strong>{{ total_messages }}</strong></article>
+            <article class="admin-kpi-card"><span>Admins activos</span><strong>{{ total_admins }}</strong></article>
+        </section>
+
+        <section class="admin-panel-card">
+            <h2>Asignar admin</h2>
+            <form method="POST" action="{{ url_for('admin_grant') }}" class="admin-form-grid">
+                <label>
+                    Correo de usuario
+                    <input type="email" name="email" required placeholder="usuario@correo.com" />
+                </label>
+                <label>
+                    Rol
+                    <select name="role">
+                        <option value="admin">Admin</option>
+                        <option value="super_admin">Super Admin</option>
+                    </select>
+                </label>
+                <div class="admin-perms-wrap">
+                    <p>Permisos (si no marcas, se aplican permisos base)</p>
+                    <div class="admin-perms-grid">
+                        {% for perm in all_permissions %}
+                        <label>
+                            <input type="checkbox" name="permissions" value="{{ perm }}" />
+                            <span>{{ permission_labels_es.get(perm, perm) }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <button type="submit" class="admin-btn primary">
+                    <i class="fas fa-user-shield"></i> Guardar permisos
+                </button>
+            </form>
+        </section>
+
+        <section class="admin-grid-two">
+            <article class="admin-panel-card">
+                <h2>Admins registrados</h2>
+                <form method="GET" action="{{ url_for('admin_admins_page') }}" class="admin-filters">
+                    <input type="text" name="admins_q" placeholder="Buscar por ID, nombre o correo" value="{{ admins_q }}" />
+                    <select name="admins_role">
+                        <option value="">Todos los roles</option>
+                        <option value="admin" {% if admins_role == 'admin' %}selected{% endif %}>Admin</option>
+                        <option value="super_admin" {% if admins_role == 'super_admin' %}selected{% endif %}>Super Admin</option>
+                    </select>
+                    <select name="admins_state">
+                        <option value="">Todos los estados</option>
+                        <option value="activo" {% if admins_state == 'activo' %}selected{% endif %}>Activo</option>
+                        <option value="inactivo" {% if admins_state == 'inactivo' %}selected{% endif %}>Inactivo</option>
+                    </select>
+                    <select name="per_admins">
+                        {% for n in per_options %}
+                        <option value="{{ n }}" {% if per_admins == n %}selected{% endif %}>{{ n }} por pagina</option>
+                        {% endfor %}
+                    </select>
+                    <input type="hidden" name="logs_q" value="{{ logs_q }}" />
+                    <input type="hidden" name="logs_action" value="{{ logs_action }}" />
+                    <input type="hidden" name="per_logs" value="{{ per_logs }}" />
+                    <button type="submit" class="admin-btn"><i class="fas fa-search"></i> Filtrar</button>
+                    <a href="{{ url_for('admin_admins_page') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
+                </form>
+
+                <div class="admin-table-wrap">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Usuario</th>
+                                <th>Estado</th>
+                                <th>Detalle</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in admins_data %}
+                            <tr>
+                                <td>
+                                    <strong>{{ row.user_row.name }}</strong><br />
+                                    <small>{{ row.user_row.email }}</small>
+                                </td>
+                                <td>
+                                    {% if row.role_row.is_active %}
+                                    <span class="status-pill ok">Activo</span>
+                                    {% else %}
+                                    <span class="status-pill off">Inactivo</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <button
+                                        type="button"
+                                        class="admin-btn"
+                                        data-name="{{ row.user_row.name }}"
+                                        data-email="{{ row.user_row.email }}"
+                                        data-role="{{ 'Super Admin' if row.role_row.role == 'super_admin' else 'Admin' }}"
+                                        data-permissions="{{ (row.permission_labels | join(', ')) if row.permission_labels else 'Sin permisos extra' }}"
+                                        data-state="{{ 'Activo' if row.role_row.is_active else 'Inactivo' }}"
+                                        data-created="{{ row.role_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if row.role_row.created_at else '-' }}"
+                                        data-user-id="{{ row.user_row.id }}"
+                                        data-revoke-url="{{ url_for('admin_revoke', user_id=row.user_row.id) }}"
+                                        data-can-revoke="{{ '1' if row.user_row.id != current_user.id else '0' }}"
+                                        onclick="openAdminRoleDetail(this)"
+                                    >
+                                        <i class="fas fa-eye"></i> Ver detalle
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="admin-pagination-wrap">
+                    <span>Total admins: {{ admins_total }}</span>
+                    <div class="admin-pagination">
+                        {% if admins_pagination.prev_url %}
+                        <a class="admin-btn" href="{{ admins_pagination.prev_url }}">Anterior</a>
+                        {% endif %}
+                        {% for p in admins_pagination.pages %}
+                            {% if p.current %}
+                            <span class="admin-page-current">{{ p.num }}</span>
+                            {% else %}
+                            <a class="admin-btn" href="{{ p.url }}">{{ p.num }}</a>
+                            {% endif %}
+                        {% endfor %}
+                        {% if admins_pagination.next_url %}
+                        <a class="admin-btn" href="{{ admins_pagination.next_url }}">Siguiente</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </article>
+
+            <article class="admin-panel-card">
+                <h2>Auditoria admin</h2>
+                <form method="GET" action="{{ url_for('admin_admins_page') }}" class="admin-filters">
+                    <input type="text" name="logs_q" placeholder="Buscar por ID, actor, accion o detalle" value="{{ logs_q }}" />
+                    <input type="text" name="logs_action" placeholder="Filtrar accion (ej: grant_admin)" value="{{ logs_action }}" />
+                    <select name="per_logs">
+                        {% for n in per_options %}
+                        <option value="{{ n }}" {% if per_logs == n %}selected{% endif %}>{{ n }} por pagina</option>
+                        {% endfor %}
+                    </select>
+                    <input type="hidden" name="admins_q" value="{{ admins_q }}" />
+                    <input type="hidden" name="admins_role" value="{{ admins_role }}" />
+                    <input type="hidden" name="admins_state" value="{{ admins_state }}" />
+                    <input type="hidden" name="per_admins" value="{{ per_admins }}" />
+                    <button type="submit" class="admin-btn"><i class="fas fa-search"></i> Filtrar</button>
+                    <a href="{{ url_for('admin_admins_page') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
+                </form>
+
+                <div style="display:flex; gap:8px; margin-bottom:10px;">
+                    <a class="admin-btn" href="{{ url_for('admin_export_audit_xlsx') }}">
+                        <i class="fas fa-file-excel"></i> Exportar Excel (.xlsx)
+                    </a>
+                </div>
+
+                <div class="admin-table-wrap">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Accion</th>
+                                <th>Actor</th>
+                                <th>Detalle</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for log_row, actor_user in recent_admin_logs %}
+                            <tr>
+                                <td>{{ log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else '-' }}</td>
+                                <td>{{ log_row.action }}</td>
+                                <td>{{ actor_user.email if actor_user else '-' }}</td>
+                                <td>
+                                    <button
+                                        type="button"
+                                        class="admin-btn"
+                                        data-id="{{ log_row.id }}"
+                                        data-date="{{ log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else '-' }}"
+                                        data-actor="{{ actor_user.email if actor_user else '-' }}"
+                                        data-action="{{ log_row.action or '-' }}"
+                                        data-detail="{{ log_row.detail or '-' }}"
+                                        data-ip="{{ log_row.ip or '-' }}"
+                                        onclick="openAuditDetail(this)"
+                                    >
+                                        <i class="fas fa-eye"></i> Ver detalle
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="admin-pagination-wrap">
+                    <span>Total eventos: {{ logs_total }}</span>
+                    <div class="admin-pagination">
+                        {% if logs_pagination.prev_url %}
+                        <a class="admin-btn" href="{{ logs_pagination.prev_url }}">Anterior</a>
+                        {% endif %}
+                        {% for p in logs_pagination.pages %}
+                            {% if p.current %}
+                            <span class="admin-page-current">{{ p.num }}</span>
+                            {% else %}
+                            <a class="admin-btn" href="{{ p.url }}">{{ p.num }}</a>
+                            {% endif %}
+                        {% endfor %}
+                        {% if logs_pagination.next_url %}
+                        <a class="admin-btn" href="{{ logs_pagination.next_url }}">Siguiente</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </article>
+        </section>
+    </div>
+
+    <div id="adminRoleModal" class="admin-modal">
+        <div class="admin-modal-content">
+            <div class="admin-modal-header">
+                <h3>Detalle del administrador</h3>
+                <button type="button" class="admin-btn" onclick="closeAdminModal('adminRoleModal')">Cerrar</button>
+            </div>
+            <div class="admin-modal-body">
+                <p><strong>Usuario:</strong> <span id="adminRoleName">-</span></p>
+                <p><strong>Correo:</strong> <span id="adminRoleEmail">-</span></p>
+                <p><strong>Rol:</strong> <span id="adminRoleRole">-</span></p>
+                <p><strong>Permisos:</strong> <span id="adminRolePermissions">-</span></p>
+                <p><strong>Estado:</strong> <span id="adminRoleState">-</span></p>
+                <p><strong>Asignado:</strong> <span id="adminRoleCreated">-</span></p>
+                <form id="adminRoleRevokeForm" method="POST" action="" class="admin-modal-actions" style="display:none;">
+                    <button type="submit" class="admin-btn danger"><i class="fas fa-user-times"></i> Revocar acceso admin</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="auditDetailModal" class="admin-modal">
+        <div class="admin-modal-content">
+            <div class="admin-modal-header">
+                <h3>Detalle de auditoria</h3>
+                <button type="button" class="admin-btn" onclick="closeAdminModal('auditDetailModal')">Cerrar</button>
+            </div>
+            <div class="admin-modal-body">
+                <p><strong>ID:</strong> <span id="auditId">-</span></p>
+                <p><strong>Fecha:</strong> <span id="auditDate">-</span></p>
+                <p><strong>Actor:</strong> <span id="auditActor">-</span></p>
+                <p><strong>Accion:</strong> <span id="auditAction">-</span></p>
+                <p><strong>IP:</strong> <span id="auditIp">-</span></p>
+                <p><strong>Detalle:</strong></p>
+                <pre id="auditDetailText" class="admin-code-block">-</pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openAdminModal(id){
+            const el = document.getElementById(id);
+            if (el) el.classList.add('show');
+        }
+        function closeAdminModal(id){
+            const el = document.getElementById(id);
+            if (el) el.classList.remove('show');
+        }
+        function openAdminRoleDetail(btn){
+            document.getElementById('adminRoleName').textContent = btn.dataset.name || '-';
+            document.getElementById('adminRoleEmail').textContent = btn.dataset.email || '-';
+            document.getElementById('adminRoleRole').textContent = btn.dataset.role || '-';
+            document.getElementById('adminRolePermissions').textContent = btn.dataset.permissions || '-';
+            document.getElementById('adminRoleState').textContent = btn.dataset.state || '-';
+            document.getElementById('adminRoleCreated').textContent = btn.dataset.created || '-';
+            const form = document.getElementById('adminRoleRevokeForm');
+            if (btn.dataset.canRevoke === '1') {
+                form.action = btn.dataset.revokeUrl || '';
+                form.style.display = 'block';
+            } else {
+                form.action = '';
+                form.style.display = 'none';
+            }
+            openAdminModal('adminRoleModal');
+        }
+        function openAuditDetail(btn){
+            document.getElementById('auditId').textContent = btn.dataset.id || '-';
+            document.getElementById('auditDate').textContent = btn.dataset.date || '-';
+            document.getElementById('auditActor').textContent = btn.dataset.actor || '-';
+            document.getElementById('auditAction').textContent = btn.dataset.action || '-';
+            document.getElementById('auditIp').textContent = btn.dataset.ip || '-';
+            document.getElementById('auditDetailText').textContent = btn.dataset.detail || '-';
+            openAdminModal('auditDetailModal');
+        }
+        document.addEventListener('click', function(e){
+            if (e.target.classList.contains('admin-modal')) {
+                e.target.classList.remove('show');
+            }
+        });
+        document.addEventListener('keydown', function(e){
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.admin-modal.show').forEach(m => m.classList.remove('show'));
+            }
+        });
+    </script>
+</body>
+</html>
