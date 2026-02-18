@@ -11,7 +11,7 @@
 </head>
 <body class="admin-page">
     <div class="admin-shell">
-        <header class="admin-topbar">
+        <header class="admin-topbar admin-exec-header">
             <div class="admin-brand">
                 <i class="fas fa-shield-alt"></i>
                 <div>
@@ -22,22 +22,11 @@
                     </p>
                 </div>
             </div>
-            <div class="admin-top-actions">
-                {% if 'manage_admins' in admin_permissions %}
-                <a class="admin-btn" href="{{ url_for('admin_admins_page') }}"><i class="fas fa-user-shield"></i> Admins</a>
-                {% endif %}
-                {% if 'view_users' in admin_permissions %}
-                <a class="admin-btn" href="{{ url_for('admin_users_page') }}"><i class="fas fa-users"></i> Usuarios</a>
-                {% endif %}
-                {% if 'view_logs' in admin_permissions %}
-                <a class="admin-btn" href="{{ url_for('admin_logs_page') }}"><i class="fas fa-clipboard-list"></i> Logs</a>
-                {% endif %}
-                {% if 'view_security' in admin_permissions %}
-                <a class="admin-btn" href="{{ url_for('admin_security_page') }}"><i class="fas fa-lock"></i> Seguridad</a>
-                {% endif %}
-                {% if 'export_reports' in admin_permissions %}
-                <a class="admin-btn" href="{{ url_for('admin_reports_page') }}"><i class="fas fa-file-export"></i> Reportes</a>
-                {% endif %}
+            <div class="admin-header-meta">
+                <span class="admin-update-pill">
+                    <i class="fas fa-clock"></i>
+                    Actualizado: <strong id="adminLastUpdated">--:--</strong>
+                </span>
                 <a class="admin-btn" href="{{ url_for('home') }}"><i class="fas fa-arrow-left"></i> Volver al chat</a>
             </div>
         </header>
@@ -52,201 +41,338 @@
             {% endif %}
         {% endwith %}
 
-        <section class="admin-kpi-grid">
-            <article class="admin-kpi-card"><span>Usuarios</span><strong>{{ total_users }}</strong></article>
-            <article class="admin-kpi-card"><span>Chats</span><strong>{{ total_chats }}</strong></article>
-            <article class="admin-kpi-card"><span>Mensajes</span><strong>{{ total_messages }}</strong></article>
-            <article class="admin-kpi-card"><span>Admins activos</span><strong>{{ total_admins }}</strong></article>
+        <section class="admin-kpi-grid admin-kpi-grid--exec">
+            <article class="admin-kpi-card">
+                <span>Usuarios totales</span>
+                <strong>{{ total_users }}</strong>
+            </article>
+            <article class="admin-kpi-card">
+                <span>Usuarios activos</span>
+                <strong>{{ account_status_values[0] if account_status_values|length > 0 else 0 }}</strong>
+            </article>
+            <article class="admin-kpi-card">
+                <span>Usuarios desactivados</span>
+                <strong>{{ account_status_values[1] if account_status_values|length > 1 else 0 }}</strong>
+            </article>
+            <article class="admin-kpi-card">
+                <span>Chats</span>
+                <strong>{{ total_chats }}</strong>
+            </article>
+            <article class="admin-kpi-card">
+                <span>Mensajes</span>
+                <strong>{{ total_messages }}</strong>
+            </article>
+            <article class="admin-kpi-card">
+                <span>Admins activos</span>
+                <strong>{{ total_admins }}</strong>
+            </article>
         </section>
 
         <section class="admin-grid-two">
-            {% if 'view_users' in admin_permissions %}
             <article class="admin-panel-card">
-                <h2>Usuarios</h2>
-                <p style="color:var(--muted);">Gestionar estado de cuentas, actividad y eliminacion (solo super admin).</p>
-                <a class="admin-btn primary" href="{{ url_for('admin_users_page') }}">
-                    <i class="fas fa-users"></i> Ir a Usuarios
-                </a>
+                <h2>Accesos rapidos</h2>
+                <div class="admin-quick-grid">
+                    {% if 'view_users' in admin_permissions %}
+                    <a class="admin-quick-card" href="{{ url_for('admin_users_page') }}">
+                        <span><i class="fas fa-users"></i> Usuarios</span>
+                        <small>Gestionar cuentas y estados</small>
+                    </a>
+                    {% endif %}
+                    {% if 'manage_admins' in admin_permissions %}
+                    <a class="admin-quick-card" href="{{ url_for('admin_admins_page') }}">
+                        <span><i class="fas fa-user-shield"></i> Administradores</span>
+                        <small>Roles, permisos y auditoria</small>
+                    </a>
+                    {% endif %}
+                    {% if 'view_security' in admin_permissions %}
+                    <a class="admin-quick-card" href="{{ url_for('admin_security_page') }}">
+                        <span><i class="fas fa-lock"></i> Seguridad</span>
+                        <small>Intentos, bloqueos y limites</small>
+                    </a>
+                    {% endif %}
+                    {% if 'view_logs' in admin_permissions %}
+                    <a class="admin-quick-card" href="{{ url_for('admin_logs_page') }}">
+                        <span><i class="fas fa-clipboard-list"></i> Logs</span>
+                        <small>Eventos administrativos</small>
+                    </a>
+                    {% endif %}
+                    {% if 'export_reports' in admin_permissions %}
+                    <a class="admin-quick-card" href="{{ url_for('admin_reports_page') }}">
+                        <span><i class="fas fa-file-export"></i> Reportes</span>
+                        <small>PDF y Excel (.xlsx)</small>
+                    </a>
+                    {% endif %}
+                </div>
             </article>
-            {% endif %}
 
-            {% if 'manage_admins' in admin_permissions %}
             <article class="admin-panel-card">
-                <h2>Admins y permisos</h2>
-                <p style="color:var(--muted);">Asignar roles, ajustar permisos y revisar auditoria administrativa.</p>
-                <a class="admin-btn primary" href="{{ url_for('admin_admins_page') }}">
-                    <i class="fas fa-user-shield"></i> Ir a Admins
-                </a>
+                <h2>Estado del sistema</h2>
+                <div class="admin-health-list">
+                    <div class="admin-health-item">
+                        <span>Base de datos</span>
+                        <strong class="ok">Conectada</strong>
+                    </div>
+                    <div class="admin-health-item">
+                        <span>Señales de seguridad</span>
+                        <strong id="healthSecurityState">Normal</strong>
+                    </div>
+                    <div class="admin-health-item">
+                        <span>Exportaciones</span>
+                        <strong class="ok">Disponibles</strong>
+                    </div>
+                    <div class="admin-health-item">
+                        <span>Ratio cuentas activas</span>
+                        <strong id="healthActiveRatio">--%</strong>
+                    </div>
+                </div>
             </article>
-            {% endif %}
-
-            {% if 'view_logs' in admin_permissions %}
-            <article class="admin-panel-card">
-                <h2>Logs</h2>
-                <p style="color:var(--muted);">Revisar eventos recientes del panel y acciones ejecutadas.</p>
-                <a class="admin-btn primary" href="{{ url_for('admin_logs_page') }}">
-                    <i class="fas fa-clipboard-list"></i> Ir a Logs
-                </a>
-            </article>
-            {% endif %}
-
-            {% if 'view_security' in admin_permissions %}
-            <article class="admin-panel-card">
-                <h2>Seguridad</h2>
-                <p style="color:var(--muted);">Intentos de login, reset por IP y reglas de rate limit.</p>
-                <a class="admin-btn primary" href="{{ url_for('admin_security_page') }}">
-                    <i class="fas fa-lock"></i> Ir a Seguridad
-                </a>
-            </article>
-            {% endif %}
-        </section>
-
-        <section class="admin-panel-card">
-            <h2>Grafica: Top usuarios por chats</h2>
-            <div style="height: 280px;">
-                <canvas id="adminTopChatsChart"></canvas>
-            </div>
         </section>
 
         <section class="admin-grid-two">
+            <article class="admin-panel-card">
+                <h2>Top usuarios por chats</h2>
+                <p class="admin-chart-note">Muestra los 8 principales y agrupa el resto en “Otros”.</p>
+                <div class="admin-chart-box">
+                    <canvas id="adminTopChatsChart"></canvas>
+                </div>
+            </article>
             <article class="admin-panel-card">
                 <h2>Mensajes por dia (ultimos 7 dias)</h2>
-                <div style="height: 260px;">
+                <div class="admin-chart-box">
                     <canvas id="adminMessagesByDayChart"></canvas>
                 </div>
             </article>
+        </section>
+
+        <section class="admin-grid-two">
             <article class="admin-panel-card">
                 <h2>Cuentas activas vs desactivadas</h2>
-                <div style="height: 260px;">
+                <div class="admin-chart-box">
                     <canvas id="adminAccountStatusChart"></canvas>
                 </div>
             </article>
-        </section>
-
-        <section class="admin-panel-card">
-            <h2>Intentos fallidos por IP (top)</h2>
-            <div style="height: 260px;">
-                <canvas id="adminFailedIpChart"></canvas>
-            </div>
+            <article class="admin-panel-card">
+                <h2>Intentos fallidos por IP (top)</h2>
+                <div class="admin-chart-box">
+                    <canvas id="adminFailedIpChart"></canvas>
+                </div>
+            </article>
         </section>
     </div>
     <script>
-        (function(){
-            const el = document.getElementById('adminTopChatsChart');
-            if (!el) return;
-            const labels = {{ top_chat_labels | tojson }};
-            const values = {{ top_chat_values | tojson }};
-            if (!labels.length) return;
-            new Chart(el, {
-                type: 'bar',
-                data: {
-                    labels,
-                    datasets: [{
-                        label: 'Chats',
-                        data: values,
-                        borderRadius: 8
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.06)' } },
-                        y: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.06)' }, beginAtZero: true }
-                    }
+        function _truncateLabel(txt, maxLen) {
+            const t = String(txt || "");
+            if (t.length <= maxLen) return t;
+            return t.slice(0, Math.max(0, maxLen - 1)) + "…";
+        }
+
+        function _sum(values) {
+            return (values || []).reduce((acc, n) => acc + (Number(n) || 0), 0);
+        }
+
+        function _setAdminMeta() {
+            const lastUpdatedEl = document.getElementById("adminLastUpdated");
+            if (lastUpdatedEl) {
+                lastUpdatedEl.textContent = new Date().toLocaleString("es-ES");
+            }
+
+            const activeValues = {{ account_status_values | tojson }};
+            const active = Number(activeValues[0] || 0);
+            const inactive = Number(activeValues[1] || 0);
+            const total = active + inactive;
+            const ratio = total > 0 ? Math.round((active / total) * 100) : 0;
+            const ratioEl = document.getElementById("healthActiveRatio");
+            if (ratioEl) {
+                ratioEl.textContent = ratio + "%";
+                ratioEl.className = ratio >= 80 ? "ok" : (ratio >= 50 ? "warn" : "off");
+            }
+
+            const failedIpValues = {{ failed_ip_values | tojson }};
+            const totalSecuritySignals = _sum(failedIpValues);
+            const securityEl = document.getElementById("healthSecurityState");
+            if (securityEl) {
+                if (totalSecuritySignals >= 40) {
+                    securityEl.textContent = "Alta actividad";
+                    securityEl.className = "off";
+                } else if (totalSecuritySignals >= 15) {
+                    securityEl.textContent = "Moderada";
+                    securityEl.className = "warn";
+                } else {
+                    securityEl.textContent = "Normal";
+                    securityEl.className = "ok";
                 }
-            });
-        })();
+            }
+        }
 
         (function(){
-            const el = document.getElementById('adminMessagesByDayChart');
-            if (!el) return;
-            const labels = {{ message_day_labels | tojson }};
-            const values = {{ message_day_values | tojson }};
-            new Chart(el, {
-                type: 'line',
-                data: {
-                    labels,
-                    datasets: [{
-                        label: 'Mensajes',
-                        data: values,
-                        borderColor: '#22d3ee',
-                        backgroundColor: 'rgba(34,211,238,0.12)',
-                        fill: true,
-                        tension: 0.25
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: true } },
-                    scales: {
-                        x: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.06)' } },
-                        y: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.06)' }, beginAtZero: true }
-                    }
-                }
-            });
-        })();
+            _setAdminMeta();
 
-        (function(){
-            const el = document.getElementById('adminAccountStatusChart');
-            if (!el) return;
-            const labels = {{ account_status_labels | tojson }};
-            const values = {{ account_status_values | tojson }};
-            new Chart(el, {
-                type: 'doughnut',
-                data: {
-                    labels,
-                    datasets: [{
-                        data: values,
-                        backgroundColor: ['#22c55e', '#ef4444'],
-                        borderColor: ['#16a34a', '#dc2626'],
-                        borderWidth: 1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            labels: { color: '#9fb0c8' }
+            const gridColor = "rgba(255,255,255,0.06)";
+            const tickColor = "#9fb0c8";
+
+            const topChartEl = document.getElementById("adminTopChatsChart");
+            if (topChartEl) {
+                const rawLabels = {{ top_chat_labels | tojson }};
+                const rawValues = {{ top_chat_values | tojson }};
+                const maxBars = 8;
+
+                let labels = rawLabels.slice(0, maxBars);
+                let values = rawValues.slice(0, maxBars).map(v => Number(v || 0));
+                if (rawLabels.length > maxBars) {
+                    labels.push("Otros");
+                    values.push(_sum(rawValues.slice(maxBars)));
+                }
+
+                if (labels.length) {
+                    new Chart(topChartEl, {
+                        type: "bar",
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: "Chats",
+                                data: values,
+                                borderRadius: 8,
+                                backgroundColor: "rgba(56, 189, 248, 0.75)",
+                                borderColor: "rgba(14, 165, 233, 1)",
+                                borderWidth: 1
+                            }]
+                        },
+                        options: {
+                            indexAxis: "y",
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    callbacks: {
+                                        title: function(items) {
+                                            const i = items?.[0]?.dataIndex ?? 0;
+                                            return labels[i] || "";
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    ticks: { color: tickColor, precision: 0 },
+                                    grid: { color: gridColor },
+                                    beginAtZero: true
+                                },
+                                y: {
+                                    ticks: {
+                                        color: tickColor,
+                                        callback: function(value, index) {
+                                            return _truncateLabel(labels[index], 22);
+                                        }
+                                    },
+                                    grid: { color: gridColor }
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+
+            const dayChartEl = document.getElementById("adminMessagesByDayChart");
+            if (dayChartEl) {
+                const rawLabels = {{ message_day_labels | tojson }};
+                const labels = rawLabels.map(d => {
+                    const parts = String(d).split("-");
+                    if (parts.length !== 3) return d;
+                    return parts[2] + "/" + parts[1];
+                });
+                const values = {{ message_day_values | tojson }};
+                new Chart(dayChartEl, {
+                    type: "line",
+                    data: {
+                        labels,
+                        datasets: [{
+                            label: "Mensajes",
+                            data: values,
+                            borderColor: "#22d3ee",
+                            backgroundColor: "rgba(34,211,238,0.15)",
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 3,
+                            pointHoverRadius: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { labels: { color: tickColor } }
+                        },
+                        scales: {
+                            x: { ticks: { color: tickColor }, grid: { color: gridColor } },
+                            y: { ticks: { color: tickColor, precision: 0 }, grid: { color: gridColor }, beginAtZero: true }
                         }
                     }
-                }
-            });
-        })();
-
-        (function(){
-            const el = document.getElementById('adminFailedIpChart');
-            if (!el) return;
-            const labels = {{ failed_ip_labels | tojson }};
-            const values = {{ failed_ip_values | tojson }};
-            if (!labels.length) {
-                return;
+                });
             }
-            new Chart(el, {
-                type: 'bar',
-                data: {
-                    labels,
-                    datasets: [{
-                        label: 'Intentos',
-                        data: values,
-                        borderRadius: 8,
-                        backgroundColor: '#f97316'
-                    }]
-                },
-                options: {
-                    indexAxis: 'y',
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.06)' }, beginAtZero: true },
-                        y: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(255,255,255,0.06)' } }
+
+            const accountChartEl = document.getElementById("adminAccountStatusChart");
+            if (accountChartEl) {
+                const labels = {{ account_status_labels | tojson }};
+                const values = {{ account_status_values | tojson }};
+                new Chart(accountChartEl, {
+                    type: "doughnut",
+                    data: {
+                        labels,
+                        datasets: [{
+                            data: values,
+                            backgroundColor: ["#22c55e", "#ef4444"],
+                            borderColor: ["#16a34a", "#dc2626"],
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { labels: { color: tickColor } }
+                        }
                     }
+                });
+            }
+
+            const failedChartEl = document.getElementById("adminFailedIpChart");
+            if (failedChartEl) {
+                const labels = {{ failed_ip_labels | tojson }};
+                const values = {{ failed_ip_values | tojson }};
+                if (labels.length) {
+                    new Chart(failedChartEl, {
+                        type: "bar",
+                        data: {
+                            labels,
+                            datasets: [{
+                                label: "Intentos",
+                                data: values,
+                                borderRadius: 8,
+                                backgroundColor: "#f97316"
+                            }]
+                        },
+                        options: {
+                            indexAxis: "y",
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: { legend: { display: false } },
+                            scales: {
+                                x: { ticks: { color: tickColor, precision: 0 }, grid: { color: gridColor }, beginAtZero: true },
+                                y: {
+                                    ticks: {
+                                        color: tickColor,
+                                        callback: function(value, index) {
+                                            return _truncateLabel(labels[index], 22);
+                                        }
+                                    },
+                                    grid: { color: gridColor }
+                                }
+                            }
+                        }
+                    });
                 }
-            });
+            }
         })();
     </script>
 </body>

@@ -37,13 +37,7 @@
         </header>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                <section class="admin-flashes">
-                    {% for category, message in messages %}
-                        <div class="admin-flash {{ category }}">{{ message }}</div>
-                    {% endfor %}
-                </section>
-            {% endif %}
+            <script id="adminFlashData" type="application/json">{{ messages | tojson }}</script>
         {% endwith %}
 
         <section class="admin-kpi-grid">
@@ -61,6 +55,7 @@
                     <option value="">Todos los estados</option>
                     <option value="activa" {% if estado == 'activa' %}selected{% endif %}>Activa</option>
                     <option value="desactivada" {% if estado == 'desactivada' %}selected{% endif %}>Desactivada</option>
+                    <option value="suspendida" {% if estado == 'suspendida' %}selected{% endif %}>Suspendida</option>
                 </select>
                 <input type="date" name="date_from" value="{{ date_from }}" />
                 <input type="date" name="date_to" value="{{ date_to }}" />
@@ -95,23 +90,30 @@
                     </thead>
                     <tbody>
                         {% for u in all_users %}
+                        {% set is_suspended = u.is_active_account and u.suspended_until and u.suspended_until > now_utc %}
+                        {% if not u.is_active_account %}
+                            {% set status_label = 'Desactivada' %}
+                            {% set status_class = 'off' %}
+                        {% elif is_suspended %}
+                            {% set status_label = 'Suspendida' %}
+                            {% set status_class = 'warn' %}
+                        {% else %}
+                            {% set status_label = 'Activa' %}
+                            {% set status_class = 'ok' %}
+                        {% endif %}
                         <tr>
                             <td>{{ u.id }}</td>
-                            <td>{{ u.name }}</td>
+                            <td><strong>{{ u.name }}</strong></td>
                             <td><small>{{ u.email }}</small></td>
                             <td>{{ u.created_at.strftime('%Y-%m-%d %H:%M:%S') if u.created_at else '-' }}</td>
                             <td>{{ u.chat_count }}</td>
                             <td>{{ u.message_count }}</td>
                             <td>
-                                {% if u.is_active_account %}
-                                    <span class="status-pill ok">Activa</span>
-                                {% else %}
-                                    <span class="status-pill off">Desactivada</span>
-                                {% endif %}
+                                <span class="status-pill {{ status_class }}">{{ status_label }}</span>
                             </td>
                             {% if can_manage_users %}
                             <td>
-                                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                <div class="admin-action-group">
                                     <button
                                         type="button"
                                         class="admin-btn"
@@ -119,37 +121,19 @@
                                         data-name="{{ u.name or '' }}"
                                         data-email="{{ u.email or '' }}"
                                         data-created="{{ u.created_at.strftime('%Y-%m-%d %H:%M:%S') if u.created_at else '-' }}"
-                                        data-status="{{ 'Activa' if u.is_active_account else 'Desactivada' }}"
+                                        data-status="{{ status_label }}"
+                                        data-active="{{ '1' if u.is_active_account else '0' }}"
+                                        data-suspended="{{ '1' if is_suspended else '0' }}"
+                                        data-suspended-until="{{ u.suspended_until.strftime('%Y-%m-%d %H:%M:%S') if u.suspended_until else '' }}"
                                         data-chats="{{ u.chat_count }}"
                                         data-messages="{{ u.message_count }}"
+                                        data-is-self="{{ '1' if u.id == current_user.id else '0' }}"
                                         onclick="openUserDetailsFromBtn(this)"
                                     >
-                                        <i class="fas fa-eye"></i> Ver
+                                        <i class="fas fa-eye"></i> Ver detalle
                                     </button>
-                                    {% if u.id != current_user.id %}
-                                    <form method="POST" action="{{ url_for('admin_user_status', user_id=u.id) }}">
-                                        {% if u.is_active_account %}
-                                            <input type="hidden" name="action" value="deactivate" />
-                                            <button type="submit" class="admin-btn danger">Desactivar</button>
-                                        {% else %}
-                                            <input type="hidden" name="action" value="activate" />
-                                            <button type="submit" class="admin-btn">Activar</button>
-                                        {% endif %}
-                                    </form>
-                                    {% if is_super_admin %}
-                                    <button
-                                        type="button"
-                                        class="admin-btn danger"
-                                        data-user-id="{{ u.id }}"
-                                        data-name="{{ u.name or '' }}"
-                                        data-email="{{ u.email or '' }}"
-                                        onclick="openDeleteUserFromBtn(this)"
-                                    >
-                                        <i class="fas fa-trash"></i> Eliminar
-                                    </button>
-                                    {% endif %}
-                                    {% else %}
-                                    <small>Tu cuenta</small>
+                                    {% if u.id == current_user.id %}
+                                    <span class="admin-row-self">Tu cuenta</span>
                                     {% endif %}
                                 </div>
                             </td>
@@ -181,19 +165,90 @@
     </div>
 
     <div id="userDetailsModal" class="admin-modal">
-        <div class="admin-modal-content">
+        <div class="admin-modal-content admin-modal-content--wide">
             <div class="admin-modal-header">
-                <h3>Detalle de usuario</h3>
+                <h3>Ficha de usuario</h3>
                 <button type="button" class="admin-btn" onclick="closeAdminModal('userDetailsModal')">Cerrar</button>
             </div>
             <div class="admin-modal-body">
-                <p><strong>ID:</strong> <span id="userDetailId">-</span></p>
-                <p><strong>Nombre:</strong> <span id="userDetailName">-</span></p>
-                <p><strong>Email:</strong> <span id="userDetailEmail">-</span></p>
-                <p><strong>Registro:</strong> <span id="userDetailCreated">-</span></p>
-                <p><strong>Estado:</strong> <span id="userDetailStatus">-</span></p>
-                <p><strong>Chats:</strong> <span id="userDetailChats">-</span></p>
-                <p><strong>Mensajes:</strong> <span id="userDetailMessages">-</span></p>
+                <div class="admin-user-summary">
+                    <div class="admin-user-avatar" id="userDetailAvatar">U</div>
+                    <div>
+                        <h4 id="userDetailName">-</h4>
+                        <p id="userDetailEmail">-</p>
+                    </div>
+                    <span id="userDetailStatusBadge" class="status-pill">-</span>
+                </div>
+
+                <div class="admin-user-detail-grid">
+                    <div class="admin-user-detail-card">
+                        <span>ID de usuario</span>
+                        <strong id="userDetailId">-</strong>
+                    </div>
+                    <div class="admin-user-detail-card">
+                        <span>Registro</span>
+                        <strong id="userDetailCreated">-</strong>
+                    </div>
+                    <div class="admin-user-detail-card">
+                        <span>Chats</span>
+                        <strong id="userDetailChats">0</strong>
+                    </div>
+                    <div class="admin-user-detail-card">
+                        <span>Mensajes</span>
+                        <strong id="userDetailMessages">0</strong>
+                    </div>
+                    <div class="admin-user-detail-card">
+                        <span>Mensajes por chat</span>
+                        <strong id="userDetailRatio">0</strong>
+                    </div>
+                    <div class="admin-user-detail-card">
+                        <span>Antigüedad</span>
+                        <strong id="userDetailAge">-</strong>
+                    </div>
+                    <div class="admin-user-detail-card">
+                        <span>Suspension hasta</span>
+                        <strong id="userDetailSuspendedUntil">Sin suspension</strong>
+                    </div>
+                </div>
+                {% if can_manage_users %}
+                <div class="admin-user-modal-actions" id="userDetailManageBox">
+                    <form id="userDetailStatusForm" method="POST" action="">
+                        <input type="hidden" id="userDetailStatusAction" name="action" value="" />
+                        <button type="submit" id="userDetailStatusBtn" class="admin-btn">
+                            <i class="fas fa-user-check"></i> Activar
+                        </button>
+                    </form>
+                    {% if is_super_admin %}
+                    <button type="button" id="userDetailDeleteBtn" class="admin-btn admin-btn-delete-soft">
+                        <i class="fas fa-trash"></i> Eliminar usuario
+                    </button>
+                    {% endif %}
+                    <form id="userDetailSuspendForm" method="POST" action="" class="admin-suspend-form">
+                        <input type="hidden" name="action" value="set" />
+                        <div class="admin-suspend-inputs">
+                            <input type="number" name="duration_value" min="1" max="365" value="24" class="admin-input admin-input-small" />
+                            <select name="duration_unit" class="admin-input admin-input-small">
+                                <option value="hours">Horas</option>
+                                <option value="days">Dias</option>
+                                <option value="weeks">Semanas</option>
+                                <option value="months">Meses</option>
+                            </select>
+                        </div>
+                        <button type="submit" id="userDetailSuspendBtn" class="admin-btn">
+                            <i class="fas fa-clock"></i> Suspender
+                        </button>
+                    </form>
+                    <form id="userDetailUnsuspendForm" method="POST" action="">
+                        <input type="hidden" name="action" value="clear" />
+                        <button type="submit" id="userDetailUnsuspendBtn" class="admin-btn">
+                            <i class="fas fa-unlock"></i> Quitar suspension
+                        </button>
+                    </form>
+                    <p id="userDetailSelfNote" class="admin-user-self-note">
+                        Esta es tu cuenta. No puedes cambiar tu propio estado o eliminarla desde este panel.
+                    </p>
+                </div>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -201,72 +256,215 @@
     <div id="deleteUserModal" class="admin-modal">
         <div class="admin-modal-content">
             <div class="admin-modal-header">
-                <h3>Confirmar eliminacion</h3>
+                <h3>Eliminar usuario</h3>
                 <button type="button" class="admin-btn" onclick="closeAdminModal('deleteUserModal')">Cerrar</button>
             </div>
             <div class="admin-modal-body">
-                <p>Esta accion es permanente y no se puede revertir.</p>
+                <div class="admin-delete-warning">
+                    <i class="fas fa-triangle-exclamation"></i>
+                    <div>
+                        <strong>Accion irreversible</strong>
+                        <p>Si continúas, se eliminará la cuenta y sus datos asociados.</p>
+                    </div>
+                </div>
                 <p><strong>Usuario:</strong> <span id="deleteUserName">-</span></p>
                 <p><strong>Email:</strong> <span id="deleteUserEmail">-</span></p>
-                <p>Para continuar, escribe <strong>ELIMINAR</strong> en el campo de confirmacion.</p>
-                <input
-                    type="text"
-                    id="deleteConfirmInput"
-                    class="admin-input"
-                    placeholder="Escribe ELIMINAR"
-                    autocomplete="off"
-                />
+                <label class="admin-check-confirm">
+                    <input type="checkbox" id="deleteConfirmCheck" />
+                    <span>Confirmo que entiendo esta acción y deseo eliminar este usuario.</span>
+                </label>
                 <form id="deleteUserForm" method="POST" action="">
-                    <button id="deleteUserSubmitBtn" type="submit" class="admin-btn danger" disabled>
-                        <i class="fas fa-trash"></i> Confirmar eliminacion
+                    <button id="deleteUserSubmitBtn" type="submit" class="admin-btn admin-btn-delete-solid" disabled>
+                        <i class="fas fa-trash"></i> Confirmar eliminación
                     </button>
                 </form>
             </div>
         </div>
     </div>
 
+    <div id="adminToastHost" class="admin-toast-host" aria-live="polite"></div>
+
     <script>
+        function syncModalBodyLock() {
+            const hasOpenModal = !!document.querySelector('.admin-modal.show');
+            document.body.classList.toggle('admin-modal-open', hasOpenModal);
+        }
+
         function openAdminModal(id){
             const el = document.getElementById(id);
             if (el) el.classList.add('show');
+            syncModalBodyLock();
         }
+
         function closeAdminModal(id){
             const el = document.getElementById(id);
             if (el) el.classList.remove('show');
+            syncModalBodyLock();
         }
+
+        function formatAgeDays(createdText) {
+            if (!createdText || createdText === '-') return '-';
+            const normalized = createdText.replace(' ', 'T');
+            const createdDate = new Date(normalized);
+            if (Number.isNaN(createdDate.getTime())) return '-';
+            const now = new Date();
+            const diffMs = now.getTime() - createdDate.getTime();
+            const days = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+            if (days === 0) return 'Hoy';
+            if (days === 1) return '1 día';
+            return days + ' días';
+        }
+
         function openUserDetailsFromBtn(btn){
-            document.getElementById('userDetailId').textContent = btn.dataset.id || '-';
-            document.getElementById('userDetailName').textContent = btn.dataset.name || '-';
-            document.getElementById('userDetailEmail').textContent = btn.dataset.email || '-';
-            document.getElementById('userDetailCreated').textContent = btn.dataset.created || '-';
-            document.getElementById('userDetailStatus').textContent = btn.dataset.status || '-';
-            document.getElementById('userDetailChats').textContent = btn.dataset.chats || '0';
-            document.getElementById('userDetailMessages').textContent = btn.dataset.messages || '0';
+            const id = btn.dataset.id || '-';
+            const name = btn.dataset.name || '-';
+            const email = btn.dataset.email || '-';
+            const created = btn.dataset.created || '-';
+            const status = btn.dataset.status || '-';
+            const isActive = btn.dataset.active === '1';
+            const isSelf = btn.dataset.isSelf === '1';
+            const isSuspended = btn.dataset.suspended === '1';
+            const suspendedUntil = btn.dataset.suspendedUntil || '';
+            const chats = Number(btn.dataset.chats || 0);
+            const messages = Number(btn.dataset.messages || 0);
+            const ratio = chats > 0 ? (messages / chats).toFixed(1) : (messages > 0 ? messages.toString() : '0');
+
+            document.getElementById('userDetailId').textContent = id;
+            document.getElementById('userDetailName').textContent = name;
+            document.getElementById('userDetailEmail').textContent = email;
+            document.getElementById('userDetailCreated').textContent = created;
+            document.getElementById('userDetailChats').textContent = String(chats);
+            document.getElementById('userDetailMessages').textContent = String(messages);
+            document.getElementById('userDetailRatio').textContent = ratio;
+            document.getElementById('userDetailAge').textContent = formatAgeDays(created);
+            document.getElementById('userDetailSuspendedUntil').textContent = suspendedUntil || 'Sin suspension';
+
+            const initials = (name || 'U').trim().split(/\s+/).slice(0, 2).map(p => p[0]?.toUpperCase() || '').join('') || 'U';
+            document.getElementById('userDetailAvatar').textContent = initials;
+
+            const badge = document.getElementById('userDetailStatusBadge');
+            badge.textContent = status;
+            const statusLower = status.toLowerCase();
+            badge.classList.remove('ok', 'off', 'warn');
+            if (statusLower.includes('suspend')) {
+                badge.classList.add('warn');
+            } else if (statusLower.includes('activa')) {
+                badge.classList.add('ok');
+            } else {
+                badge.classList.add('off');
+            }
+
+            const statusForm = document.getElementById('userDetailStatusForm');
+            const statusAction = document.getElementById('userDetailStatusAction');
+            const statusBtn = document.getElementById('userDetailStatusBtn');
+            const deleteBtn = document.getElementById('userDetailDeleteBtn');
+            const selfNote = document.getElementById('userDetailSelfNote');
+            const suspendForm = document.getElementById('userDetailSuspendForm');
+            const unsuspendForm = document.getElementById('userDetailUnsuspendForm');
+            const unsuspendBtn = document.getElementById('userDetailUnsuspendBtn');
+
+            if (statusForm && statusAction && statusBtn) {
+                statusForm.action = '/admin/user_status/' + id;
+                statusAction.value = isActive ? 'deactivate' : 'activate';
+                statusBtn.classList.toggle('danger', isActive);
+                statusBtn.innerHTML = isActive
+                    ? '<i class="fas fa-user-slash"></i> Desactivar'
+                    : '<i class="fas fa-user-check"></i> Activar';
+                statusForm.style.display = isSelf ? 'none' : 'block';
+            }
+
+            if (selfNote) {
+                selfNote.style.display = isSelf ? 'block' : 'none';
+            }
+
+            if (deleteBtn) {
+                deleteBtn.style.display = isSelf ? 'none' : 'inline-flex';
+                deleteBtn.dataset.userId = id;
+                deleteBtn.dataset.name = name;
+                deleteBtn.dataset.email = email;
+                deleteBtn.onclick = function() {
+                    openDeleteUserFromBtn(deleteBtn);
+                };
+            }
+
+            if (suspendForm) {
+                suspendForm.action = '/admin/user_suspend/' + id;
+                suspendForm.style.display = (!isSelf && isActive) ? 'grid' : 'none';
+            }
+            if (unsuspendForm) {
+                unsuspendForm.action = '/admin/user_suspend/' + id;
+                unsuspendForm.style.display = (!isSelf && isSuspended) ? 'block' : 'none';
+            }
+            if (unsuspendBtn) {
+                unsuspendBtn.classList.toggle('danger', isSuspended);
+            }
+
             openAdminModal('userDetailsModal');
         }
+
         function openDeleteUserFromBtn(btn){
             const userId = btn.dataset.userId || '';
             document.getElementById('deleteUserName').textContent = btn.dataset.name || '-';
             document.getElementById('deleteUserEmail').textContent = btn.dataset.email || '-';
             document.getElementById('deleteUserForm').action = '/admin/user_delete/' + userId;
-            const input = document.getElementById('deleteConfirmInput');
+            const check = document.getElementById('deleteConfirmCheck');
             const submitBtn = document.getElementById('deleteUserSubmitBtn');
-            if (input) input.value = '';
+            if (check) check.checked = false;
             if (submitBtn) submitBtn.disabled = true;
+            closeAdminModal('userDetailsModal');
             openAdminModal('deleteUserModal');
         }
-        document.getElementById('deleteConfirmInput')?.addEventListener('input', function(e){
-            const value = (e.target.value || '').trim().toUpperCase();
+
+        document.getElementById('deleteConfirmCheck')?.addEventListener('change', function(e){
             const submitBtn = document.getElementById('deleteUserSubmitBtn');
-            if (submitBtn) {
-                submitBtn.disabled = value !== 'ELIMINAR';
-            }
+            if (submitBtn) submitBtn.disabled = !e.target.checked;
         });
+
+        function showCenterToast(message, kind) {
+            const host = document.getElementById('adminToastHost');
+            if (!host) return;
+            const toast = document.createElement('div');
+            toast.className = 'admin-toast admin-toast--' + (kind || 'info');
+            toast.textContent = message || '';
+            host.appendChild(toast);
+            requestAnimationFrame(() => toast.classList.add('show'));
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, 2600);
+        }
+
+        function loadFlashToasts() {
+            const dataEl = document.getElementById('adminFlashData');
+            if (!dataEl) return;
+            let list = [];
+            try {
+                list = JSON.parse(dataEl.textContent || '[]');
+            } catch (e) {
+                list = [];
+            }
+            list.forEach((item, idx) => {
+                const category = Array.isArray(item) ? item[0] : 'info';
+                const message = Array.isArray(item) ? item[1] : String(item);
+                setTimeout(() => showCenterToast(message, category), idx * 240);
+            });
+        }
+
         document.addEventListener('click', function(e){
             if (e.target.classList.contains('admin-modal')) {
                 e.target.classList.remove('show');
+                syncModalBodyLock();
             }
         });
+
+        document.addEventListener('keydown', function(e){
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.admin-modal.show').forEach(m => m.classList.remove('show'));
+                syncModalBodyLock();
+            }
+        });
+
+        loadFlashToasts();
     </script>
 </body>
 </html>

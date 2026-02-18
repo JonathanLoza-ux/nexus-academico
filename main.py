@@ -300,19 +300,32 @@ def _before_request_enforce_active_account():
     if not current_user.is_authenticated:
         return None
 
-    if bool(getattr(current_user, "is_active_account", True)):
-        return None
-
     email_hint = (getattr(current_user, "email", "") or "").strip().lower()
     user_id = getattr(current_user, "id", None)
+    suspension_until = _active_suspension_until(current_user)
+
+    if bool(getattr(current_user, "is_active_account", True)) and not suspension_until:
+        return None
 
     logout_user()
     for key in ["_user_id", "_fresh", "_id", "remember_token"]:
         session.pop(key, None)
 
-    _set_login_help_mode("support", email_hint=email_hint)
-    flash("Tu cuenta esta desactivada. Contacta al administrador.", "error")
-    log_event("FORCE_LOGOUT_INACTIVE", user_id=user_id, email=email_hint, path=request.path)
+    if suspension_until:
+        msg = f"Tu cuenta esta suspendida hasta {_format_dt_human(suspension_until)}."
+        _set_login_help_mode("support", email_hint=email_hint)
+        flash(msg + " Contacta al administrador.", "error")
+        log_event(
+            "FORCE_LOGOUT_SUSPENDED",
+            user_id=user_id,
+            email=email_hint,
+            path=request.path,
+            suspended_until=_format_dt_human(suspension_until),
+        )
+    else:
+        _set_login_help_mode("support", email_hint=email_hint)
+        flash("Tu cuenta esta desactivada. Contacta al administrador.", "error")
+        log_event("FORCE_LOGOUT_INACTIVE", user_id=user_id, email=email_hint, path=request.path)
 
     redirect_url = url_for('login_page')
     wants_json = (
@@ -323,9 +336,14 @@ def _before_request_enforce_active_account():
         or request.path.startswith("/feedback")
     )
     if wants_json:
+        err_msg = (
+            f"Tu cuenta esta suspendida hasta {_format_dt_human(suspension_until)}."
+            if suspension_until else
+            "Tu cuenta esta desactivada. Contacta al administrador."
+        )
         return jsonify({
             "success": False,
-            "error": "Tu cuenta esta desactivada. Contacta al administrador.",
+            "error": err_msg,
             "redirect": redirect_url,
         }), 401
 
@@ -386,6 +404,34 @@ def to_naive_utc(dt):
         return dt
     return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
+
+def _format_dt_human(dt):
+    dt_n = to_naive_utc(dt)
+    if not dt_n:
+        return "-"
+    return dt_n.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _active_suspension_until(user, now_dt=None):
+    if not user:
+        return None
+    now_dt = now_dt or utcnow_naive()
+    until = to_naive_utc(getattr(user, "suspended_until", None))
+    if until and until > now_dt:
+        return until
+    return None
+
+
+def _user_status_data(user, now_dt=None):
+    now_dt = now_dt or utcnow_naive()
+    is_active = bool(getattr(user, "is_active_account", True))
+    until = _active_suspension_until(user, now_dt)
+    if not is_active:
+        return "desactivada", "Desactivada", None
+    if until:
+        return "suspendida", "Suspendida", until
+    return "activa", "Activa", None
+
 # =========================================================
 # 7) MODELOS
 # =========================================================
@@ -396,6 +442,7 @@ class User(UserMixin, db.Model):
     name = db.Column(db.String(100), nullable=False)
     created_at = db.Column(db.DateTime, default=utcnow_naive, index=True)
     is_active_account = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    suspended_until = db.Column(db.DateTime, nullable=True, index=True)
     conversations = db.relationship('Conversation', backref='owner', lazy=True)
     saved_messages = db.relationship('SavedMessage', backref='owner', lazy=True, cascade="all, delete-orphan")
 
@@ -735,6 +782,30 @@ def _ensure_user_is_active_account_column():
         return False
 
 
+def _ensure_user_suspended_until_column():
+    try:
+        inspector = inspect(db.engine)
+        cols = {c["name"] for c in inspector.get_columns("user")}
+        if "suspended_until" in cols:
+            return False
+
+        dialect = (db.engine.dialect.name or "").lower()
+        if dialect in ("mysql", "mariadb"):
+            db.session.execute(text("ALTER TABLE `user` ADD COLUMN suspended_until DATETIME NULL"))
+        elif dialect == "sqlite":
+            db.session.execute(text("ALTER TABLE \"user\" ADD COLUMN suspended_until DATETIME"))
+        else:
+            db.session.execute(text("ALTER TABLE \"user\" ADD COLUMN suspended_until TIMESTAMP NULL"))
+
+        db.session.commit()
+        print("Migracion aplicada: user.suspended_until agregado.")
+        return True
+    except Exception as e:
+        db.session.rollback()
+        print(f"No se pudo aplicar migracion user.suspended_until: {e}")
+        return False
+
+
 print("=== CREANDO/MODIFICANDO TABLAS ===")
 if ENVIRONMENT == "dev":
     print("Modelos detectados:", [model.__name__ for model in db.Model.__subclasses__()])
@@ -748,6 +819,7 @@ with app.app_context():
             db.create_all()
             _ensure_user_created_at_column()
             _ensure_user_is_active_account_column()
+            _ensure_user_suspended_until_column()
             _bootstrap_super_admin_roles()
             print("=== TABLAS CREADAS/VERIFICADAS ===")
             break
@@ -1429,6 +1501,22 @@ def login_page():
             flash('Tu cuenta esta desactivada. Contacta al administrador.', 'error')
             _set_login_help_mode("support", email_hint=email)
 
+        elif _active_suspension_until(user):
+            until = _active_suspension_until(user)
+            log_event(
+                "LOGIN_BLOCKED",
+                email=email,
+                ip=ip,
+                reason="suspended_account",
+                user_id=user.id,
+                suspended_until=_format_dt_human(until),
+            )
+            flash(
+                f"Tu cuenta esta suspendida hasta {_format_dt_human(until)}. Contacta al administrador.",
+                'error'
+            )
+            _set_login_help_mode("support", email_hint=email)
+
         else:
             log_event("LOGIN_OK", email=email, ip=ip, user_id=user.id)
             _set_login_help_mode("")
@@ -1743,6 +1831,7 @@ def _admin_users_data():
             User.email,
             User.created_at,
             User.is_active_account,
+            User.suspended_until,
             func.coalesce(chats_per_user_sq.c.chat_count, 0).label("chat_count"),
             func.coalesce(messages_per_user_sq.c.message_count, 0).label("message_count"),
         )
@@ -1976,6 +2065,7 @@ def admin_users_page():
     stats = _admin_stats()
     args = request.args.to_dict(flat=True)
     per_options = [5, 10, 20, 50, 100]
+    now_utc = utcnow_naive()
 
     users_all = _admin_users_data()
     q = (request.args.get("q") or "").strip().lower()
@@ -1990,9 +2080,8 @@ def admin_users_page():
             u for u in users_all
             if q in (u.name or "").lower() or q in (u.email or "").lower() or q == str(u.id)
         ]
-    if estado in {"activa", "desactivada"}:
-        active = estado == "activa"
-        users_all = [u for u in users_all if bool(u.is_active_account) == active]
+    if estado in {"activa", "desactivada", "suspendida"}:
+        users_all = [u for u in users_all if _user_status_data(u, now_utc)[0] == estado]
     if date_from:
         users_all = [u for u in users_all if u.created_at and u.created_at >= date_from]
     if date_to:
@@ -2020,6 +2109,7 @@ def admin_users_page():
         all_users=all_users,
         q=q,
         estado=estado,
+        now_utc=now_utc,
         date_from=(request.args.get("date_from") or ""),
         date_to=(request.args.get("date_to") or ""),
         per_page=per_page,
@@ -2247,15 +2337,18 @@ def _build_xlsx_response(filename_base: str, sheet_name: str, headers: list, row
 @admin_required(permission="export_reports")
 def admin_export_users_xlsx():
     rows = _admin_users_data()
-    headers = ["ID", "Nombre", "Email", "Registro", "Activa", "Chats", "Mensajes"]
+    headers = ["ID", "Nombre", "Email", "Registro", "Estado", "Suspendida hasta", "Chats", "Mensajes"]
     values = []
+    now_utc = utcnow_naive()
     for u in rows:
+        status_key, status_label, suspended_until = _user_status_data(u, now_utc)
         values.append([
             u.id,
             u.name or "",
             u.email or "",
             u.created_at.strftime('%Y-%m-%d %H:%M:%S') if u.created_at else "",
-            "Si" if bool(u.is_active_account) else "No",
+            status_label,
+            _format_dt_human(suspended_until) if status_key == "suspendida" else "",
             int(u.chat_count or 0),
             int(u.message_count or 0),
         ])
@@ -2305,6 +2398,21 @@ def admin_export_audit_xlsx():
 @admin_required(permission="export_reports")
 def admin_export_users_json():
     rows = _admin_users_data()
+    now_utc = utcnow_naive()
+    export_rows = []
+    for u in rows:
+        status_key, status_label, suspended_until = _user_status_data(u, now_utc)
+        export_rows.append([
+            u.id,
+            u.name or "",
+            u.email or "",
+            u.created_at.strftime('%Y-%m-%d %H:%M:%S') if u.created_at else "-",
+            status_label,
+            _format_dt_human(suspended_until) if status_key == "suspendida" else "-",
+            int(u.chat_count or 0),
+            int(u.message_count or 0),
+        ])
+
     return jsonify({
         "success": True,
         "title": "Usuarios Nexus",
@@ -2312,19 +2420,8 @@ def admin_export_users_json():
         "sections": [
             {
                 "title": "Usuarios",
-                "columns": ["ID", "Nombre", "Email", "Registro", "Estado", "Chats", "Mensajes"],
-                "rows": [
-                    [
-                        u.id,
-                        u.name or "",
-                        u.email or "",
-                        u.created_at.strftime('%Y-%m-%d %H:%M:%S') if u.created_at else "-",
-                        "Activa" if bool(u.is_active_account) else "Desactivada",
-                        int(u.chat_count or 0),
-                        int(u.message_count or 0),
-                    ]
-                    for u in rows
-                ],
+                "columns": ["ID", "Nombre", "Email", "Registro", "Estado", "Suspendida hasta", "Chats", "Mensajes"],
+                "rows": export_rows,
             }
         ],
     })
@@ -2534,6 +2631,65 @@ def admin_user_status(user_id):
     db.session.commit()
     _add_admin_audit("user_status_change", target_user_id=user.id, detail=f"email={user.email}; action={action}")
     flash(msg, "success")
+    return redirect(url_for('admin_users_page'))
+
+
+@app.route('/admin/user_suspend/<int:user_id>', methods=['POST'])
+@login_required
+@admin_required(permission="manage_users")
+def admin_user_suspend(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        flash("Usuario no encontrado.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    if user.id == current_user.id:
+        flash("No puedes suspender tu propia cuenta desde el panel.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    if _is_super_admin_email(user.email) and _effective_admin_role(current_user) != "super_admin":
+        flash("Solo el super admin puede cambiar esta cuenta.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    action = (request.form.get("action") or "set").strip().lower()
+    if action == "clear":
+        user.suspended_until = None
+        db.session.commit()
+        _add_admin_audit("user_unsuspend", target_user_id=user.id, detail=f"email={user.email}")
+        flash("Suspension retirada. La cuenta ya puede iniciar sesion.", "success")
+        return redirect(url_for('admin_users_page'))
+
+    duration_value = _safe_int(request.form.get("duration_value"), 0)
+    duration_unit = (request.form.get("duration_unit") or "").strip().lower()
+    if duration_value < 1:
+        flash("Debes indicar un tiempo de suspension valido.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    if duration_unit == "hours":
+        delta = timedelta(hours=duration_value)
+    elif duration_unit == "days":
+        delta = timedelta(days=duration_value)
+    elif duration_unit == "weeks":
+        delta = timedelta(weeks=duration_value)
+    elif duration_unit == "months":
+        delta = timedelta(days=30 * duration_value)
+    else:
+        flash("Unidad de tiempo invalida.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    now_utc = utcnow_naive()
+    user.suspended_until = now_utc + delta
+    db.session.commit()
+
+    _add_admin_audit(
+        "user_suspend",
+        target_user_id=user.id,
+        detail=(
+            f"email={user.email}; duration={duration_value}_{duration_unit}; "
+            f"until={_format_dt_human(user.suspended_until)}"
+        ),
+    )
+    flash(f"Cuenta suspendida hasta {_format_dt_human(user.suspended_until)}.", "success")
     return redirect(url_for('admin_users_page'))
 
 
