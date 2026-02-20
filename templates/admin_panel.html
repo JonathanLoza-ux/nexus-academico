@@ -108,22 +108,120 @@
             <article class="admin-panel-card">
                 <h2>Estado del sistema</h2>
                 <div class="admin-health-list">
-                    <div class="admin-health-item">
-                        <span>Base de datos</span>
-                        <strong class="ok">Conectada</strong>
+                    {% for h in system_health %}
+                    <div class="admin-health-item admin-health-item--{{ h.status }}">
+                        <div class="admin-health-main">
+                            <span><i class="fas {{ h.icon }}"></i> {{ h.name }}</span>
+                            <small>{{ h.detail }}</small>
+                        </div>
+                        <strong class="{{ h.status }}">{{ h.label }}</strong>
                     </div>
-                    <div class="admin-health-item">
-                        <span>Señales de seguridad</span>
-                        <strong id="healthSecurityState">Normal</strong>
+                    {% endfor %}
+                </div>
+            </article>
+        </section>
+
+        <section class="admin-panel-card">
+            <div class="admin-section-head">
+                <h2>Centro de actividad</h2>
+                {% if can_view_logs %}
+                <a class="admin-btn" href="{{ url_for('admin_logs_page') }}">
+                    <i class="fas fa-arrow-right"></i> Ver logs completos
+                </a>
+                {% endif %}
+            </div>
+            <div class="admin-activity-list">
+                {% if activity_feed %}
+                    {% for item in activity_feed %}
+                    <article class="admin-activity-item admin-activity-item--{{ item.tone }}">
+                        <div class="admin-activity-icon">
+                            <i class="fas {{ item.icon }}"></i>
+                        </div>
+                        <div class="admin-activity-body">
+                            <div class="admin-activity-line">
+                                <strong>{{ item.title }}</strong>
+                                <span title="{{ item.at }} UTC">{{ item.when }}</span>
+                            </div>
+                            <p><b>Actor:</b> {{ item.actor }} | <b>Objetivo:</b> {{ item.target }}</p>
+                            <small>{{ item.detail }}</small>
+                        </div>
+                    </article>
+                    {% endfor %}
+                {% else %}
+                    <p class="admin-chart-note">Aun no hay actividad registrada.</p>
+                {% endif %}
+            </div>
+        </section>
+
+        <section class="admin-panel-card">
+            <div class="admin-section-head">
+                <h2>Alertas en tiempo real</h2>
+                <span class="admin-update-pill">
+                    <i class="fas fa-signal"></i>
+                    Ultima revision: <strong id="adminAlertsUpdatedAt">{{ alerts_payload.generated_at }}</strong>
+                </span>
+            </div>
+            <div class="admin-alert-summary">
+                <span class="admin-alert-pill admin-alert-pill--off">
+                    Criticas: <strong id="adminAlertCriticalCount">{{ alerts_payload.critical_count }}</strong>
+                </span>
+                <span class="admin-alert-pill admin-alert-pill--warn">
+                    Advertencias: <strong id="adminAlertWarningCount">{{ alerts_payload.warning_count }}</strong>
+                </span>
+                <small>Actualizacion automatica cada 20 segundos</small>
+            </div>
+            <div id="adminAlertsList" class="admin-alert-list">
+                {% for item in alerts_payload["items"] %}
+                <article class="admin-alert-item admin-alert-item--{{ item.tone }}">
+                    <i class="fas {{ item.icon }}"></i>
+                    <div>
+                        <strong>{{ item.title }}</strong>
+                        <small>{{ item.detail }}</small>
                     </div>
-                    <div class="admin-health-item">
-                        <span>Exportaciones</span>
-                        <strong class="ok">Disponibles</strong>
-                    </div>
-                    <div class="admin-health-item">
-                        <span>Ratio cuentas activas</span>
-                        <strong id="healthActiveRatio">--%</strong>
-                    </div>
+                </article>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section class="admin-grid-two">
+            <article class="admin-panel-card">
+                <div class="admin-section-head">
+                    <h2>Prioridades del turno</h2>
+                    <button type="button" id="adminManualRefreshBtn" class="admin-btn">
+                        <i class="fas fa-rotate"></i> Actualizar ahora
+                    </button>
+                </div>
+                <div id="adminPriorityList" class="admin-priority-list">
+                    {% if alerts_payload["items"] %}
+                        {% for item in alerts_payload["items"][:4] %}
+                        <article class="admin-priority-item admin-priority-item--{{ item.tone }}">
+                            <i class="fas {{ item.icon }}"></i>
+                            <div>
+                                <strong>{{ item.title }}</strong>
+                                <small>{{ item.detail }}</small>
+                            </div>
+                        </article>
+                        {% endfor %}
+                    {% else %}
+                    <p class="admin-chart-note">No hay prioridades pendientes.</p>
+                    {% endif %}
+                </div>
+            </article>
+            <article class="admin-panel-card">
+                <h2>Acciones recomendadas</h2>
+                <div class="admin-actions-grid">
+                    {% if 'view_users' in admin_permissions %}
+                    <a class="admin-btn" href="{{ url_for('admin_users_page') }}"><i class="fas fa-users"></i> Revisar usuarios</a>
+                    {% endif %}
+                    {% if 'view_security' in admin_permissions %}
+                    <a class="admin-btn" href="{{ url_for('admin_security_page') }}"><i class="fas fa-lock"></i> Revisar seguridad</a>
+                    {% endif %}
+                    {% if 'view_logs' in admin_permissions %}
+                    <a class="admin-btn" href="{{ url_for('admin_logs_page') }}"><i class="fas fa-clipboard-list"></i> Ver auditoria</a>
+                    {% endif %}
+                    {% if 'export_reports' in admin_permissions %}
+                    <a class="admin-btn" href="{{ url_for('admin_reports_page') }}"><i class="fas fa-file-export"></i> Exportar reportes</a>
+                    {% endif %}
                 </div>
             </article>
         </section>
@@ -131,7 +229,7 @@
         <section class="admin-grid-two">
             <article class="admin-panel-card">
                 <h2>Top usuarios por chats</h2>
-                <p class="admin-chart-note">Muestra los 8 principales y agrupa el resto en “Otros”.</p>
+                <p class="admin-chart-note">Muestra los 8 principales y agrupa el resto en "Otros".</p>
                 <div class="admin-chart-box">
                     <canvas id="adminTopChatsChart"></canvas>
                 </div>
@@ -159,15 +257,116 @@
             </article>
         </section>
     </div>
+    <script id="adminPanelJsData" type="application/json">{{ {
+        'alertsFeedUrl': url_for('admin_alerts_feed'),
+        'alertsPayload': alerts_payload,
+        'accountStatusValues': account_status_values,
+        'topChatLabels': top_chat_labels,
+        'topChatValues': top_chat_values,
+        'messageDayLabels': message_day_labels,
+        'messageDayValues': message_day_values,
+        'accountStatusLabels': account_status_labels,
+        'failedIpLabels': failed_ip_labels,
+        'failedIpValues': failed_ip_values
+    } | tojson }}</script>
     <script>
+        function _readPanelJson(id, fallback) {
+            const el = document.getElementById(id);
+            if (!el) return fallback;
+            try {
+                return JSON.parse(el.textContent || "");
+            } catch (_err) {
+                return fallback;
+            }
+        }
+
+        const panelData = _readPanelJson("adminPanelJsData", {});
+
         function _truncateLabel(txt, maxLen) {
             const t = String(txt || "");
             if (t.length <= maxLen) return t;
-            return t.slice(0, Math.max(0, maxLen - 1)) + "…";
+            return t.slice(0, Math.max(0, maxLen - 1)) + "...";
         }
 
         function _sum(values) {
             return (values || []).reduce((acc, n) => acc + (Number(n) || 0), 0);
+        }
+
+        function _escapeHtml(value) {
+            const txt = String(value || "");
+            return txt
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/\"/g, "&quot;")
+                .replace(/'/g, "&#39;");
+        }
+
+        function _renderAlerts(payload) {
+            if (!payload || !payload.items) return;
+            const listEl = document.getElementById("adminAlertsList");
+            const criticalEl = document.getElementById("adminAlertCriticalCount");
+            const warningEl = document.getElementById("adminAlertWarningCount");
+            const updatedEl = document.getElementById("adminAlertsUpdatedAt");
+
+            if (criticalEl) criticalEl.textContent = String(payload.critical_count || 0);
+            if (warningEl) warningEl.textContent = String(payload.warning_count || 0);
+            if (updatedEl) updatedEl.textContent = payload.generated_at || "--";
+            if (!listEl) return;
+
+            const items = Array.isArray(payload.items) ? payload.items : [];
+            if (!items.length) {
+                listEl.innerHTML = '<article class="admin-alert-item admin-alert-item--ok"><i class="fas fa-circle-check"></i><div><strong>Sin alertas</strong><small>No hay novedades.</small></div></article>';
+                return;
+            }
+
+            listEl.innerHTML = items.map(item => (
+                '<article class="admin-alert-item admin-alert-item--' + _escapeHtml(item.tone) + '">' +
+                '<i class="fas ' + _escapeHtml(item.icon) + '"></i>' +
+                '<div>' +
+                '<strong>' + _escapeHtml(item.title) + '</strong>' +
+                '<small>' + _escapeHtml(item.detail) + '</small>' +
+                '</div></article>'
+            )).join("");
+        }
+
+        function _renderPriorities(payload) {
+            const listEl = document.getElementById("adminPriorityList");
+            if (!listEl) return;
+            const items = (payload && Array.isArray(payload.items)) ? payload.items.slice(0, 4) : [];
+            if (!items.length) {
+                listEl.innerHTML = '<p class="admin-chart-note">No hay prioridades pendientes.</p>';
+                return;
+            }
+            listEl.innerHTML = items.map(item => (
+                '<article class="admin-priority-item admin-priority-item--' + _escapeHtml(item.tone) + '">' +
+                '<i class="fas ' + _escapeHtml(item.icon) + '"></i>' +
+                '<div>' +
+                '<strong>' + _escapeHtml(item.title) + '</strong>' +
+                '<small>' + _escapeHtml(item.detail) + '</small>' +
+                '</div>' +
+                '</article>'
+            )).join("");
+        }
+
+        async function _refreshAlerts() {
+            try {
+                const resp = await fetch(panelData.alertsFeedUrl || "", {
+                    method: "GET",
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                    cache: "no-store"
+                });
+                if (!resp.ok) return false;
+                const data = await resp.json();
+                if (data && data.success) {
+                    _renderAlerts(data);
+                    _renderPriorities(data);
+                    return true;
+                }
+                return false;
+            } catch (_err) {
+                return false;
+            }
         }
 
         function _setAdminMeta() {
@@ -176,7 +375,7 @@
                 lastUpdatedEl.textContent = new Date().toLocaleString("es-ES");
             }
 
-            const activeValues = {{ account_status_values | tojson }};
+            const activeValues = Array.isArray(panelData.accountStatusValues) ? panelData.accountStatusValues : [];
             const active = Number(activeValues[0] || 0);
             const inactive = Number(activeValues[1] || 0);
             const total = active + inactive;
@@ -187,7 +386,7 @@
                 ratioEl.className = ratio >= 80 ? "ok" : (ratio >= 50 ? "warn" : "off");
             }
 
-            const failedIpValues = {{ failed_ip_values | tojson }};
+            const failedIpValues = Array.isArray(panelData.failedIpValues) ? panelData.failedIpValues : [];
             const totalSecuritySignals = _sum(failedIpValues);
             const securityEl = document.getElementById("healthSecurityState");
             if (securityEl) {
@@ -206,14 +405,29 @@
 
         (function(){
             _setAdminMeta();
+            _renderAlerts(panelData.alertsPayload || {});
+            _renderPriorities(panelData.alertsPayload || {});
+            setInterval(_refreshAlerts, 20000);
+
+            const manualBtn = document.getElementById("adminManualRefreshBtn");
+            if (manualBtn) {
+                manualBtn.addEventListener("click", async function() {
+                    manualBtn.disabled = true;
+                    manualBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Actualizando';
+                    await _refreshAlerts();
+                    _setAdminMeta();
+                    manualBtn.disabled = false;
+                    manualBtn.innerHTML = '<i class="fas fa-rotate"></i> Actualizar ahora';
+                });
+            }
 
             const gridColor = "rgba(255,255,255,0.06)";
             const tickColor = "#9fb0c8";
 
             const topChartEl = document.getElementById("adminTopChatsChart");
             if (topChartEl) {
-                const rawLabels = {{ top_chat_labels | tojson }};
-                const rawValues = {{ top_chat_values | tojson }};
+                const rawLabels = Array.isArray(panelData.topChatLabels) ? panelData.topChatLabels : [];
+                const rawValues = Array.isArray(panelData.topChatValues) ? panelData.topChatValues : [];
                 const maxBars = 8;
 
                 let labels = rawLabels.slice(0, maxBars);
@@ -246,8 +460,11 @@
                                 tooltip: {
                                     callbacks: {
                                         title: function(items) {
-                                            const i = items?.[0]?.dataIndex ?? 0;
-                                            return labels[i] || "";
+                                            let index = 0;
+                                            if (items && items.length && typeof items[0].dataIndex === "number") {
+                                                index = items[0].dataIndex;
+                                            }
+                                            return labels[index] || "";
                                         }
                                     }
                                 }
@@ -275,17 +492,17 @@
 
             const dayChartEl = document.getElementById("adminMessagesByDayChart");
             if (dayChartEl) {
-                const rawLabels = {{ message_day_labels | tojson }};
+                const rawLabels = Array.isArray(panelData.messageDayLabels) ? panelData.messageDayLabels : [];
                 const labels = rawLabels.map(d => {
                     const parts = String(d).split("-");
                     if (parts.length !== 3) return d;
                     return parts[2] + "/" + parts[1];
                 });
-                const values = {{ message_day_values | tojson }};
+                const values = Array.isArray(panelData.messageDayValues) ? panelData.messageDayValues : [];
                 new Chart(dayChartEl, {
                     type: "line",
                     data: {
-                        labels,
+                        labels: labels,
                         datasets: [{
                             label: "Mensajes",
                             data: values,
@@ -313,12 +530,12 @@
 
             const accountChartEl = document.getElementById("adminAccountStatusChart");
             if (accountChartEl) {
-                const labels = {{ account_status_labels | tojson }};
-                const values = {{ account_status_values | tojson }};
+                const labels = Array.isArray(panelData.accountStatusLabels) ? panelData.accountStatusLabels : [];
+                const values = Array.isArray(panelData.accountStatusValues) ? panelData.accountStatusValues : [];
                 new Chart(accountChartEl, {
                     type: "doughnut",
                     data: {
-                        labels,
+                        labels: labels,
                         datasets: [{
                             data: values,
                             backgroundColor: ["#22c55e", "#ef4444"],
@@ -338,13 +555,13 @@
 
             const failedChartEl = document.getElementById("adminFailedIpChart");
             if (failedChartEl) {
-                const labels = {{ failed_ip_labels | tojson }};
-                const values = {{ failed_ip_values | tojson }};
+                const labels = Array.isArray(panelData.failedIpLabels) ? panelData.failedIpLabels : [];
+                const values = Array.isArray(panelData.failedIpValues) ? panelData.failedIpValues : [];
                 if (labels.length) {
                     new Chart(failedChartEl, {
                         type: "bar",
                         data: {
-                            labels,
+                            labels: labels,
                             datasets: [{
                                 label: "Intentos",
                                 data: values,

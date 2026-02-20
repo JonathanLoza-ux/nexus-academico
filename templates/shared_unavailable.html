@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title or "Enlace no disponible" }} - Nexus</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/nexus-brain.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+      body.shared-unavailable-page {
+        margin: 0;
+        min-height: 100dvh;
+        background:
+          radial-gradient(900px 480px at 105% -10%, rgba(6,182,212,0.18), transparent 60%),
+          radial-gradient(700px 420px at -10% 110%, rgba(14,165,233,0.14), transparent 58%),
+          var(--bg-dark);
+        display: grid;
+        place-items: center;
+        padding: clamp(12px, 3.2vw, 32px);
+        box-sizing: border-box;
+      }
+      .shared-unavailable-card {
+        width: min(520px, 100%);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)), var(--bg-sidebar);
+        padding: 24px;
+        box-shadow: 0 16px 42px rgba(0,0,0,0.45);
+        box-sizing: border-box;
+      }
+      .shared-unavailable-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+      .shared-unavailable-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        border: 1px solid rgba(239,68,68,0.45);
+        background: rgba(239,68,68,0.12);
+        color: #fecaca;
+        display: grid;
+        place-items: center;
+        font-size: 1.15rem;
+        font-weight: 700;
+      }
+      .shared-unavailable-card h1 {
+        margin: 0;
+        font-size: 1.3rem;
+      }
+      .shared-unavailable-card p {
+        margin: 0 0 14px 0;
+        color: var(--text-dim);
+        line-height: 1.48;
+        word-break: break-word;
+      }
+      .shared-unavailable-code {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(56,189,248,0.45);
+        background: rgba(56,189,248,0.12);
+        color: #bae6fd;
+        font-size: 0.78rem;
+        margin-bottom: 14px;
+      }
+      .shared-unavailable-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .shared-unavailable-actions a {
+        text-decoration: none;
+      }
+      .shared-unavailable-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+      }
+      @media (max-width: 520px) {
+        body.shared-unavailable-page {
+          padding: 10px;
+        }
+        .shared-unavailable-card {
+          width: 100%;
+          padding: 16px;
+          border-radius: 14px;
+        }
+        .shared-unavailable-head {
+          gap: 10px;
+          margin-bottom: 8px;
+        }
+        .shared-unavailable-icon {
+          width: 40px;
+          height: 40px;
+          border-radius: 10px;
+        }
+        .shared-unavailable-card h1 {
+          font-size: 1.15rem;
+          line-height: 1.25;
+        }
+        .shared-unavailable-actions {
+          flex-direction: column;
+        }
+        .shared-unavailable-btn {
+          width: 100%;
+          min-height: 42px;
+        }
+      }
+      @media (max-width: 360px) {
+        .shared-unavailable-card {
+          padding: 14px;
+        }
+        .shared-unavailable-card h1 {
+          font-size: 1.06rem;
+        }
+      }
+    </style>
+</head>
+<body class="shared-unavailable-page">
+  <article class="shared-unavailable-card">
+    <div class="shared-unavailable-head">
+      <div class="shared-unavailable-icon">!</div>
+      <h1>{{ title or "Enlace no disponible" }}</h1>
+    </div>
+    <span class="shared-unavailable-code">Estado {{ code or "404" }}</span>
+    <p>{{ message or "No es posible abrir esta conversacion compartida." }}</p>
+    <div class="shared-unavailable-actions">
+      <a class="submit-btn shared-unavailable-btn" href="{{ url_for('login_page') }}" style="padding:10px 14px;">Ir a iniciar sesion</a>
+      <a class="btn-cancel shared-unavailable-btn" href="{{ url_for('home') }}">Ir al chat</a>
+    </div>
+  </article>
+</body>
+</html>

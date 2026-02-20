@@ -9,13 +9,13 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
 </head>
 <body class="admin-page">
-    <div class="admin-shell">
+    <div class="admin-shell admin-logs-shell">
         <header class="admin-topbar">
             <div class="admin-brand">
                 <i class="fas fa-shield-alt"></i>
                 <div>
                     <h1>Logs de administracion</h1>
-                    <p>Eventos y acciones recientes del panel</p>
+                    <p>Auditoria operativa, correlacion y respuesta</p>
                 </div>
             </div>
             <div class="admin-top-actions">
@@ -36,19 +36,51 @@
             </div>
         </header>
 
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <section class="admin-flashes">
+                    {% for category, message in messages %}
+                        <div class="admin-flash {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </section>
+            {% endif %}
+        {% endwith %}
+
         <section class="admin-kpi-grid">
-            <article class="admin-kpi-card"><span>Usuarios</span><strong>{{ total_users }}</strong></article>
-            <article class="admin-kpi-card"><span>Chats</span><strong>{{ total_chats }}</strong></article>
-            <article class="admin-kpi-card"><span>Mensajes</span><strong>{{ total_messages }}</strong></article>
-            <article class="admin-kpi-card"><span>Admins activos</span><strong>{{ total_admins }}</strong></article>
+            <article class="admin-kpi-card"><span>Eventos filtrados</span><strong>{{ logs_total }}</strong></article>
+            <article class="admin-kpi-card"><span>Eventos hoy</span><strong>{{ events_today }}</strong></article>
+            <article class="admin-kpi-card"><span>Criticos hoy</span><strong>{{ critical_today }}</strong></article>
+            <article class="admin-kpi-card"><span>Actores unicos</span><strong>{{ actors_unique }}</strong></article>
+            <article class="admin-kpi-card"><span>IPs sospechosas</span><strong>{{ suspicious_ips }}</strong></article>
+            <article class="admin-kpi-card"><span>Retencion</span><strong>{{ retention_days }} dias</strong></article>
         </section>
 
-        <section class="admin-panel-card">
-            <h2>Auditoria del panel</h2>
-
+        <section class="admin-panel-card admin-logs-sticky">
+            <h2>Filtros avanzados</h2>
             <form method="GET" action="{{ url_for('admin_logs_page') }}" class="admin-filters">
-                <input type="text" name="q" placeholder="Buscar por ID, actor, accion, detalle o usuario objetivo" value="{{ q }}" />
-                <input type="text" name="action" placeholder="Filtrar por accion" value="{{ action }}" />
+                <input type="text" name="q" placeholder="Buscar en actor, accion, detalle, IP, RID, IDs" value="{{ q }}" />
+                <select name="action">
+                    <option value="">Todas las acciones</option>
+                    {% for action_item in logs_action_options %}
+                    <option value="{{ action_item }}" {% if action == action_item|lower %}selected{% endif %}>{{ action_item }}</option>
+                    {% endfor %}
+                </select>
+                <input type="text" name="actor" placeholder="Actor (correo o nombre)" value="{{ actor }}" list="logActorsList" />
+                <datalist id="logActorsList">
+                    {% for actor_item in logs_actor_options %}
+                    <option value="{{ actor_item }}"></option>
+                    {% endfor %}
+                </datalist>
+                <input type="text" name="ip" placeholder="IP" value="{{ ip }}" />
+                <input type="text" name="target_user" placeholder="Usuario objetivo (ID)" value="{{ target_user }}" />
+                <input type="text" name="event_id" placeholder="ID de evento" value="{{ event_id }}" />
+                <input type="text" name="request_id" placeholder="Request ID (RID)" value="{{ request_id }}" />
+                <select name="severity">
+                    <option value="">Todas severidades</option>
+                    <option value="info" {% if severity == 'info' %}selected{% endif %}>Info</option>
+                    <option value="warn" {% if severity == 'warn' %}selected{% endif %}>Advertencia</option>
+                    <option value="critical" {% if severity == 'critical' %}selected{% endif %}>Critico</option>
+                </select>
                 <input type="date" name="date_from" value="{{ date_from }}" />
                 <input type="date" name="date_to" value="{{ date_to }}" />
                 <select name="per_page">
@@ -59,46 +91,133 @@
                 <button type="submit" class="admin-btn"><i class="fas fa-search"></i> Filtrar</button>
                 <a href="{{ url_for('admin_logs_page') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
             </form>
-
-            {% if 'export_reports' in admin_permissions %}
-            <div style="display:flex; gap:8px; margin-bottom:10px;">
-                <a class="admin-btn" href="{{ url_for('admin_export_audit_xlsx') }}">
-                    <i class="fas fa-file-excel"></i> Exportar Excel (.xlsx)
+            <div class="admin-actions-grid" style="margin-top:10px;">
+                {% if 'export_reports' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_export_audit_xlsx') }}{% if export_query %}?{{ export_query }}{% endif %}">
+                    <i class="fas fa-file-excel"></i> XLSX filtrado
                 </a>
+                <a class="admin-btn" href="{{ url_for('admin_export_audit_csv') }}{% if export_query %}?{{ export_query }}{% endif %}">
+                    <i class="fas fa-file-csv"></i> CSV filtrado
+                </a>
+                <a class="admin-btn" href="{{ url_for('admin_export_audit_pdf') }}{% if export_query %}?{{ export_query }}{% endif %}">
+                    <i class="fas fa-file-pdf"></i> PDF filtrado
+                </a>
+                <a class="admin-btn" href="{{ url_for('admin_export_audit_json') }}{% if export_query %}?{{ export_query }}{% endif %}">
+                    <i class="fas fa-code"></i> JSON filtrado
+                </a>
+                {% endif %}
+                {% if can_cleanup_logs %}
+                <form method="POST" action="{{ url_for('admin_logs_cleanup') }}">
+                    <button type="submit" class="admin-btn danger">
+                        <i class="fas fa-broom"></i> Limpiar logs antiguos
+                    </button>
+                </form>
+                {% endif %}
             </div>
-            {% endif %}
+        </section>
 
+        <section class="admin-panel-card">
+            <h2>Eventos recientes (timeline)</h2>
+            <div class="admin-audit-timeline">
+                {% if timeline_items %}
+                    {% for item in timeline_items %}
+                    <article class="admin-audit-item admin-audit-item--{{ item.tone }}">
+                        <span class="admin-audit-icon"><i class="fas {{ item.icon }}"></i></span>
+                        <div class="admin-audit-content">
+                            <div class="admin-audit-head">
+                                <strong>{{ item.title }}</strong>
+                                <span>{{ item.when }}</span>
+                            </div>
+                            <p>
+                                <span class="log-sev log-sev--{{ item.severity_key }}">{{ item.severity_label }}</span>
+                                <b>Accion:</b> {{ item.log_row.action or '-' }} |
+                                <b>Actor:</b> {{ item.actor_user.email if item.actor_user else '-' }} |
+                                <b>IP:</b> {{ item.log_row.ip or '-' }}
+                            </p>
+                            <small>{{ item.summary }}</small>
+                        </div>
+                    </article>
+                    {% endfor %}
+                {% else %}
+                <p class="admin-chart-note">No hay eventos para el filtro actual.</p>
+                {% endif %}
+            </div>
+        </section>
+
+        <section class="admin-panel-card">
+            <h2>Tabla detallada</h2>
             <div class="admin-table-wrap">
-                <table class="admin-table">
+                <table class="admin-table admin-table--logs">
                     <thead>
                         <tr>
                             <th>Fecha</th>
+                            <th>Sev.</th>
                             <th>Accion</th>
                             <th>Actor</th>
-                            <th>Detalle</th>
+                            <th>Objetivo</th>
+                            <th>IP</th>
+                            <th>RID</th>
+                            <th>Acciones</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for log_row, actor_user in recent_admin_logs %}
+                        {% for row in table_rows %}
                         <tr>
-                            <td>{{ log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else '-' }}</td>
-                            <td>{{ log_row.action }}</td>
-                            <td>{{ actor_user.email if actor_user else '-' }}</td>
+                            <td>{{ row.log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if row.log_row.created_at else '-' }}</td>
+                            <td><span class="log-sev log-sev--{{ row.severity_key }}">{{ row.severity_label }}</span></td>
+                            <td>{{ row.log_row.action or '-' }}</td>
+                            <td>{{ row.actor_user.email if row.actor_user else '-' }}</td>
                             <td>
-                                <button
-                                    type="button"
-                                    class="admin-btn"
-                                    data-id="{{ log_row.id }}"
-                                    data-date="{{ log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else '-' }}"
-                                    data-actor="{{ actor_user.email if actor_user else '-' }}"
-                                    data-action="{{ log_row.action or '-' }}"
-                                    data-detail="{{ log_row.detail or '-' }}"
-                                    data-ip="{{ log_row.ip or '-' }}"
-                                    data-target-user="{{ log_row.target_user_id or '-' }}"
-                                    onclick="openLogDetail(this)"
-                                >
-                                    <i class="fas fa-eye"></i> Ver detalle
-                                </button>
+                                {% if row.target_user %}
+                                    #{{ row.target_user.id }} - {{ row.target_user.name }}
+                                {% elif row.log_row.target_user_id %}
+                                    #{{ row.log_row.target_user_id }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>{{ row.log_row.ip or '-' }}</td>
+                            <td>
+                                {% if row.request_id %}
+                                <span class="admin-perm-chip">{{ row.request_id }}</span>
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td class="admin-actions-cell">
+                                <div class="admin-actions-grid">
+                                    <button
+                                        type="button"
+                                        class="admin-btn"
+                                        data-id="{{ row.log_row.id }}"
+                                        data-date="{{ row.log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if row.log_row.created_at else '-' }}"
+                                        data-severity-key="{{ row.severity_key }}"
+                                        data-severity-label="{{ row.severity_label }}"
+                                        data-actor="{{ row.actor_user.email if row.actor_user else '-' }}"
+                                        data-action="{{ row.log_row.action or '-' }}"
+                                        data-title="{{ row.title }}"
+                                        data-target-user-id="{{ row.target_user.id if row.target_user else (row.log_row.target_user_id or '') }}"
+                                        data-target-user-name="{{ row.target_user.name if row.target_user else '' }}"
+                                        data-ip="{{ row.log_row.ip or '-' }}"
+                                        data-request-id="{{ row.request_id or '' }}"
+                                        data-method="{{ row.method or '-' }}"
+                                        data-path="{{ row.path or '-' }}"
+                                        data-endpoint="{{ row.endpoint or '-' }}"
+                                        data-summary="{{ row.summary }}"
+                                        data-module-name="{{ row.module_name }}"
+                                        data-module-url="{{ row.module_url }}"
+                                        data-detail="{{ row.detail_masked }}"
+                                        data-detail-pairs='{{ row.detail_pairs | tojson }}'
+                                        onclick="openLogDetail(this)"
+                                    >
+                                        <i class="fas fa-eye"></i> Ver
+                                    </button>
+                                    {% if row.request_id %}
+                                    <button type="button" class="admin-btn" onclick="copyRequestId('{{ row.request_id }}')">
+                                        <i class="fas fa-copy"></i> RID
+                                    </button>
+                                    {% endif %}
+                                </div>
                             </td>
                         </tr>
                         {% endfor %}
@@ -128,53 +247,164 @@
     </div>
 
     <div id="logDetailModal" class="admin-modal">
-        <div class="admin-modal-content">
+        <div class="admin-modal-content admin-modal-content--wide">
             <div class="admin-modal-header">
                 <h3>Detalle de evento</h3>
                 <button type="button" class="admin-btn" onclick="closeAdminModal('logDetailModal')">Cerrar</button>
             </div>
             <div class="admin-modal-body">
-                <p><strong>ID:</strong> <span id="logDetailId">-</span></p>
-                <p><strong>Fecha:</strong> <span id="logDetailDate">-</span></p>
-                <p><strong>Actor:</strong> <span id="logDetailActor">-</span></p>
-                <p><strong>Accion:</strong> <span id="logDetailAction">-</span></p>
-                <p><strong>Usuario objetivo:</strong> <span id="logDetailTargetUser">-</span></p>
-                <p><strong>IP:</strong> <span id="logDetailIp">-</span></p>
-                <p><strong>Detalle:</strong></p>
-                <pre id="logDetailText" class="admin-code-block">-</pre>
+                <div class="admin-user-detail-grid">
+                    <div class="admin-user-detail-card"><span>ID</span><strong id="logDetailId">-</strong></div>
+                    <div class="admin-user-detail-card"><span>Fecha</span><strong id="logDetailDate">-</strong></div>
+                    <div class="admin-user-detail-card"><span>Severidad</span><strong id="logDetailSeverity">-</strong></div>
+                    <div class="admin-user-detail-card"><span>Accion</span><strong id="logDetailAction">-</strong></div>
+                    <div class="admin-user-detail-card"><span>Actor</span><strong id="logDetailActor">-</strong></div>
+                    <div class="admin-user-detail-card"><span>IP</span><strong id="logDetailIp">-</strong></div>
+                    <div class="admin-user-detail-card"><span>Request ID</span><strong id="logDetailRid">-</strong></div>
+                    <div class="admin-user-detail-card"><span>Metodo</span><strong id="logDetailMethod">-</strong></div>
+                    <div class="admin-user-detail-card"><span>Ruta</span><strong id="logDetailPath">-</strong></div>
+                    <div class="admin-user-detail-card"><span>Endpoint</span><strong id="logDetailEndpoint">-</strong></div>
+                </div>
+                <div class="admin-perm-preview">
+                    <p>Resumen corto</p>
+                    <div class="admin-audit-detail-card"><strong id="logDetailSummary">-</strong></div>
+                </div>
+                <div class="admin-perm-preview">
+                    <p>Detalle estructurado</p>
+                    <div id="logDetailStructured" class="admin-audit-detail-grid"></div>
+                </div>
+                <div class="admin-perm-preview">
+                    <p>Raw detail (enmascarado)</p>
+                    <pre id="logDetailText" class="admin-code-block">-</pre>
+                </div>
+                <div class="admin-modal-actions">
+                    <a id="logGoModuleBtn" class="admin-btn" href="{{ url_for('admin_logs_page') }}"><i class="fas fa-link"></i> Ir a modulo</a>
+                    <a id="logGoUserBtn" class="admin-btn" href="{{ url_for('admin_users_page') }}"><i class="fas fa-user"></i> Ir a usuario</a>
+                    <a id="logCorrelateBtn" class="admin-btn" href="{{ url_for('admin_logs_page') }}"><i class="fas fa-diagram-project"></i> Correlacion RID</a>
+                    <button type="button" id="logCopyRidBtn" class="admin-btn"><i class="fas fa-copy"></i> Copiar RID</button>
+                </div>
             </div>
         </div>
     </div>
 
+    <div id="adminToastHost" class="admin-toast-host" aria-live="polite"></div>
     <script>
+        function syncModalBodyLock() {
+            const hasOpen = !!document.querySelector('.admin-modal.show');
+            document.body.classList.toggle('admin-modal-open', hasOpen);
+        }
         function openAdminModal(id){
             const el = document.getElementById(id);
             if (el) el.classList.add('show');
+            syncModalBodyLock();
         }
         function closeAdminModal(id){
             const el = document.getElementById(id);
             if (el) el.classList.remove('show');
+            syncModalBodyLock();
+        }
+        function showCenterToast(message, kind) {
+            const host = document.getElementById('adminToastHost');
+            if (!host || !message) return;
+            const toast = document.createElement('article');
+            toast.className = 'admin-toast admin-toast--' + (kind || 'success');
+            toast.textContent = message;
+            host.appendChild(toast);
+            requestAnimationFrame(() => toast.classList.add('show'));
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 260);
+            }, 2400);
+        }
+        function mountFlashToasts() {
+            const flashes = document.querySelectorAll('.admin-flashes .admin-flash');
+            flashes.forEach(flash => {
+                const text = flash.textContent ? flash.textContent.trim() : '';
+                const cls = flash.className || '';
+                const kind = cls.includes('error') || cls.includes('danger')
+                    ? 'error'
+                    : (cls.includes('warning') ? 'warn' : 'success');
+                showCenterToast(text, kind);
+            });
+            const wrap = document.querySelector('.admin-flashes');
+            if (wrap && flashes.length) wrap.style.display = 'none';
         }
         function openLogDetail(btn){
             document.getElementById('logDetailId').textContent = btn.dataset.id || '-';
             document.getElementById('logDetailDate').textContent = btn.dataset.date || '-';
-            document.getElementById('logDetailActor').textContent = btn.dataset.actor || '-';
+            document.getElementById('logDetailSeverity').innerHTML = '<span class="log-sev log-sev--' + (btn.dataset.severityKey || 'info') + '">' + (btn.dataset.severityLabel || '-') + '</span>';
             document.getElementById('logDetailAction').textContent = btn.dataset.action || '-';
-            document.getElementById('logDetailTargetUser').textContent = btn.dataset.targetUser || '-';
+            document.getElementById('logDetailActor').textContent = btn.dataset.actor || '-';
             document.getElementById('logDetailIp').textContent = btn.dataset.ip || '-';
+            document.getElementById('logDetailRid').textContent = btn.dataset.requestId || '-';
+            document.getElementById('logDetailMethod').textContent = btn.dataset.method || '-';
+            document.getElementById('logDetailPath').textContent = btn.dataset.path || '-';
+            document.getElementById('logDetailEndpoint').textContent = btn.dataset.endpoint || '-';
+            document.getElementById('logDetailSummary').textContent = btn.dataset.summary || '-';
             document.getElementById('logDetailText').textContent = btn.dataset.detail || '-';
+
+            const structured = document.getElementById('logDetailStructured');
+            let pairs = [];
+            try { pairs = JSON.parse(btn.dataset.detailPairs || '[]'); } catch (_err) { pairs = []; }
+            if (!pairs.length) {
+                structured.innerHTML = '<span class="admin-perm-preview-empty">Sin detalle estructurado.</span>';
+            } else {
+                structured.innerHTML = pairs.map(p => (
+                    '<article class="admin-audit-detail-card"><span>' + (p[0] || '-') + '</span><strong>' + (p[1] || '-') + '</strong></article>'
+                )).join('');
+            }
+
+            const moduleBtn = document.getElementById('logGoModuleBtn');
+            moduleBtn.href = btn.dataset.moduleUrl || '{{ url_for("admin_logs_page") }}';
+            moduleBtn.innerHTML = '<i class="fas fa-link"></i> Ir a ' + (btn.dataset.moduleName || 'modulo');
+
+            const userBtn = document.getElementById('logGoUserBtn');
+            const targetId = (btn.dataset.targetUserId || '').trim();
+            if (targetId) {
+                userBtn.style.display = 'inline-flex';
+                userBtn.href = '{{ url_for("admin_users_page") }}?q=' + encodeURIComponent(targetId);
+            } else {
+                userBtn.style.display = 'none';
+                userBtn.href = '{{ url_for("admin_users_page") }}';
+            }
+
+            const correlateBtn = document.getElementById('logCorrelateBtn');
+            const rid = (btn.dataset.requestId || '').trim();
+            if (rid) {
+                correlateBtn.style.display = 'inline-flex';
+                correlateBtn.href = '{{ url_for("admin_logs_page") }}?request_id=' + encodeURIComponent(rid);
+            } else {
+                correlateBtn.style.display = 'none';
+                correlateBtn.href = '{{ url_for("admin_logs_page") }}';
+            }
+
+            const copyBtn = document.getElementById('logCopyRidBtn');
+            copyBtn.style.display = rid ? 'inline-flex' : 'none';
+            copyBtn.onclick = function() { copyRequestId(rid); };
+
             openAdminModal('logDetailModal');
+        }
+        function copyRequestId(rid) {
+            if (!rid) return;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(rid).then(() => showCenterToast('Request ID copiado.', 'success'));
+            } else {
+                showCenterToast('No se pudo copiar automaticamente.', 'warn');
+            }
         }
         document.addEventListener('click', function(e){
             if (e.target.classList.contains('admin-modal')) {
                 e.target.classList.remove('show');
+                syncModalBodyLock();
             }
         });
         document.addEventListener('keydown', function(e){
             if (e.key === 'Escape') {
                 document.querySelectorAll('.admin-modal.show').forEach(m => m.classList.remove('show'));
+                syncModalBodyLock();
             }
         });
+        mountFlashToasts();
     </script>
 </body>
 </html>

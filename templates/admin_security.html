@@ -9,13 +9,13 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
 </head>
 <body class="admin-page">
-    <div class="admin-shell">
+    <div class="admin-shell admin-security-shell">
         <header class="admin-topbar">
             <div class="admin-brand">
                 <i class="fas fa-shield-alt"></i>
                 <div>
                     <h1>Seguridad</h1>
-                    <p>Intentos, bloqueos y rate limits</p>
+                    <p>Monitoreo y respuesta operativa</p>
                 </div>
             </div>
             <div class="admin-top-actions">
@@ -36,6 +36,16 @@
             </div>
         </header>
 
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <section class="admin-flashes">
+                    {% for category, message in messages %}
+                        <div class="admin-flash {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </section>
+            {% endif %}
+        {% endwith %}
+
         <section class="admin-kpi-grid">
             <article class="admin-kpi-card"><span>Usuarios</span><strong>{{ total_users }}</strong></article>
             <article class="admin-kpi-card"><span>Chats</span><strong>{{ total_chats }}</strong></article>
@@ -43,92 +53,193 @@
             <article class="admin-kpi-card"><span>Admins activos</span><strong>{{ total_admins }}</strong></article>
         </section>
 
-        <section class="admin-panel-card">
-            <h2>Intentos de login</h2>
-            <form method="GET" action="{{ url_for('admin_security_page') }}" class="admin-filters">
-                <input type="text" name="login_q" placeholder="Buscar por email, IP o ID" value="{{ login_q }}" />
-                <select name="per_login">
-                    {% for n in per_options %}
-                    <option value="{{ n }}" {% if per_login == n %}selected{% endif %}>{{ n }} por pagina</option>
-                    {% endfor %}
-                </select>
-                <input type="hidden" name="reset_q" value="{{ reset_q }}" />
-                <input type="hidden" name="rate_q" value="{{ rate_q }}" />
-                <input type="hidden" name="per_reset" value="{{ per_reset }}" />
-                <input type="hidden" name="per_rate" value="{{ per_rate }}" />
-                <button type="submit" class="admin-btn"><i class="fas fa-search"></i> Filtrar</button>
-                <a href="{{ url_for('admin_security_page') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
-            </form>
-
-            {% if 'export_reports' in admin_permissions %}
-            <div style="display:flex; gap:8px; margin-bottom:10px;">
-                <a class="admin-btn" href="{{ url_for('admin_export_login_attempts_xlsx') }}">
-                    <i class="fas fa-file-excel"></i> Exportar Excel (.xlsx)
-                </a>
-            </div>
-            {% endif %}
-
-            <div class="admin-table-wrap">
-                <table class="admin-table">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Email</th>
-                            <th>Intentos</th>
-                            <th>Detalle</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for row in login_attempts %}
-                        <tr>
-                            <td>{{ row.id }}</td>
-                            <td>{{ row.email or '-' }}</td>
-                            <td>{{ row.attempts }}</td>
-                            <td>
-                                <button
-                                    type="button"
-                                    class="admin-btn"
-                                    data-title="Intento de login #{{ row.id }}"
-                                    data-lines='[
-                                        {"label":"Email","value":"{{ row.email or "-" }}"},
-                                        {"label":"IP","value":"{{ row.ip or "-" }}"},
-                                        {"label":"Intentos","value":"{{ row.attempts }}"},
-                                        {"label":"Primer intento","value":"{{ row.first_attempt_at.strftime("%Y-%m-%d %H:%M:%S") if row.first_attempt_at else "-" }}"},
-                                        {"label":"Bloqueado hasta","value":"{{ row.blocked_until.strftime("%Y-%m-%d %H:%M:%S") if row.blocked_until else "-" }}"}
-                                    ]'
-                                    onclick="openSecurityDetail(this)"
-                                >
-                                    <i class="fas fa-eye"></i> Ver detalle
-                                </button>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-
-            <div class="admin-pagination-wrap">
-                <span>Total intentos: {{ login_total }}</span>
-                <div class="admin-pagination">
-                    {% if login_pagination.prev_url %}
-                    <a class="admin-btn" href="{{ login_pagination.prev_url }}">Anterior</a>
-                    {% endif %}
-                    {% for p in login_pagination.pages %}
-                        {% if p.current %}
-                        <span class="admin-page-current">{{ p.num }}</span>
-                        {% else %}
-                        <a class="admin-btn" href="{{ p.url }}">{{ p.num }}</a>
-                        {% endif %}
-                    {% endfor %}
-                    {% if login_pagination.next_url %}
-                    <a class="admin-btn" href="{{ login_pagination.next_url }}">Siguiente</a>
-                    {% endif %}
-                </div>
-            </div>
+        <section class="admin-tabs-nav" id="adminSecurityTabs">
+            <button type="button" class="admin-tab-btn is-active" data-tab="resumen">
+                <i class="fas fa-chart-pie"></i> Resumen
+            </button>
+            <button type="button" class="admin-tab-btn" data-tab="login">
+                <i class="fas fa-user-lock"></i> Login
+            </button>
+            <button type="button" class="admin-tab-btn" data-tab="reset">
+                <i class="fas fa-unlock-keyhole"></i> Reset IP
+            </button>
+            <button type="button" class="admin-tab-btn" data-tab="rate">
+                <i class="fas fa-gauge-high"></i> Rate limit
+            </button>
+            <button type="button" class="admin-tab-btn" data-tab="acciones">
+                <i class="fas fa-screwdriver-wrench"></i> Acciones
+            </button>
         </section>
 
-        <section class="admin-grid-two">
-            <article class="admin-panel-card">
+        <section class="admin-tab-panel is-active" data-tab-panel="resumen">
+            <section class="admin-grid-two">
+                <article class="admin-panel-card">
+                    <h2>Estado general</h2>
+                    <div class="admin-health-list">
+                        <div class="admin-health-item">
+                            <span><i class="fas fa-heart-pulse"></i> Nivel de riesgo</span>
+                            <strong class="{{ security_risk_tone }}">{{ security_risk_label }}</strong>
+                        </div>
+                        <div class="admin-health-item">
+                            <span><i class="fas fa-ban"></i> Bloqueos activos</span>
+                            <strong class="{{ security_risk_tone }}">{{ total_active_blocks }}</strong>
+                        </div>
+                        <div class="admin-health-item">
+                            <span><i class="fas fa-shield-halved"></i> Login bloqueados</span>
+                            <strong class="warn">{{ login_blocked_active }}</strong>
+                        </div>
+                        <div class="admin-health-item">
+                            <span><i class="fas fa-network-wired"></i> Reset IP bloqueados</span>
+                            <strong class="warn">{{ reset_blocked_active }}</strong>
+                        </div>
+                        <div class="admin-health-item">
+                            <span><i class="fas fa-gauge-high"></i> Rate limit bloqueados</span>
+                            <strong class="warn">{{ rate_blocked_active }}</strong>
+                        </div>
+                        <div class="admin-health-item">
+                            <span><i class="fas fa-user-slash"></i> Bloqueos manuales</span>
+                            <strong class="warn">{{ manual_block_active }}</strong>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="admin-panel-card">
+                    <h2>Prioridades de revision</h2>
+                    <div class="admin-priority-list">
+                        <article class="admin-priority-item admin-priority-item--off">
+                            <div>
+                                <strong>Intentos criticos de login</strong>
+                                <small>Filas con alto volumen de intentos.</small>
+                            </div>
+                            <b>{{ login_risky_rows }}</b>
+                        </article>
+                        <article class="admin-priority-item admin-priority-item--warn">
+                            <div>
+                                <strong>Bloqueos recientes (24h)</strong>
+                                <small>Eventos de bloqueo detectados hoy.</small>
+                            </div>
+                            <b>{{ recent_lock_events }}</b>
+                        </article>
+                        <article class="admin-priority-item admin-priority-item--ok">
+                            <div>
+                                <strong>Capacidad de respuesta</strong>
+                                <small>{{ "Acciones habilitadas para tu rol." if can_security_actions else "Modo solo lectura para tu rol." }}</small>
+                            </div>
+                            <b>{{ "Activa" if can_security_actions else "Lectura" }}</b>
+                        </article>
+                    </div>
+                </article>
+            </section>
+        </section>
+
+        <section class="admin-tab-panel" data-tab-panel="login">
+            <section class="admin-panel-card">
+                <h2>Intentos de login</h2>
+                <form method="GET" action="{{ url_for('admin_security_page') }}" class="admin-filters">
+                    <input type="text" name="login_q" placeholder="Buscar por email, IP o ID" value="{{ login_q }}" />
+                    <select name="per_login">
+                        {% for n in per_options %}
+                        <option value="{{ n }}" {% if per_login == n %}selected{% endif %}>{{ n }} por pagina</option>
+                        {% endfor %}
+                    </select>
+                    <input type="hidden" name="reset_q" value="{{ reset_q }}" />
+                    <input type="hidden" name="rate_q" value="{{ rate_q }}" />
+                    <input type="hidden" name="per_reset" value="{{ per_reset }}" />
+                    <input type="hidden" name="per_rate" value="{{ per_rate }}" />
+                    <input type="hidden" name="tab" value="login" />
+                    <button type="submit" class="admin-btn"><i class="fas fa-search"></i> Filtrar</button>
+                    <a href="{{ url_for('admin_security_page', tab='login') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
+                </form>
+
+                {% if 'export_reports' in admin_permissions %}
+                <div class="admin-actions-grid" style="margin-bottom:10px;">
+                    <a class="admin-btn" href="{{ url_for('admin_export_login_attempts_xlsx') }}">
+                        <i class="fas fa-file-excel"></i> Exportar Excel (.xlsx)
+                    </a>
+                </div>
+                {% endif %}
+
+                <div class="admin-table-wrap">
+                    <table class="admin-table admin-table--security">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Email</th>
+                                <th>IP</th>
+                                <th>Intentos</th>
+                                <th>Estado</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in login_attempts %}
+                            <tr>
+                                <td>{{ row.id }}</td>
+                                <td>{{ row.email or '-' }}</td>
+                                <td>{{ row.ip or '-' }}</td>
+                                <td>{{ row.attempts }}</td>
+                                <td><span class="status-pill {{ row.status_key }}">{{ row.status_label }}</span></td>
+                                <td class="admin-actions-cell">
+                                    <div class="admin-actions-grid">
+                                        <button
+                                            type="button"
+                                            class="admin-btn"
+                                            data-title="Intento de login #{{ row.id }}"
+                                            data-lines='{{ [
+                                                {"label":"Email","value":(row.email or "-")},
+                                                {"label":"IP","value":(row.ip or "-")},
+                                                {"label":"Intentos","value":row.attempts},
+                                                {"label":"Primer intento","value":(row.first_attempt_at.strftime("%Y-%m-%d %H:%M:%S") if row.first_attempt_at else "-")},
+                                                {"label":"Bloqueado hasta","value":row.blocked_until_human}
+                                            ] | tojson }}'
+                                            onclick="openSecurityDetail(this)"
+                                        >
+                                            <i class="fas fa-eye"></i> Ver detalle
+                                        </button>
+                                        {% if can_security_actions and row.can_unlock %}
+                                        <form id="loginUnlockForm{{ row.id }}" method="POST" action="{{ url_for('admin_security_unlock_login', row_id=row.id) }}">
+                                            <input type="hidden" name="return_to" value="{{ request.full_path }}" />
+                                            <button
+                                                type="button"
+                                                class="admin-btn admin-btn-ghost security-action-trigger"
+                                                data-form-id="loginUnlockForm{{ row.id }}"
+                                                data-title="Desbloquear login"
+                                                data-message="Se reiniciara el contador y bloqueo del intento de login #{{ row.id }}."
+                                            >
+                                                <i class="fas fa-unlock"></i> Desbloquear
+                                            </button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="admin-pagination-wrap">
+                    <span>Total intentos: {{ login_total }}</span>
+                    <div class="admin-pagination">
+                        {% if login_pagination.prev_url %}
+                        <a class="admin-btn" href="{{ login_pagination.prev_url }}">Anterior</a>
+                        {% endif %}
+                        {% for p in login_pagination.pages %}
+                            {% if p.current %}
+                            <span class="admin-page-current">{{ p.num }}</span>
+                            {% else %}
+                            <a class="admin-btn" href="{{ p.url }}">{{ p.num }}</a>
+                            {% endif %}
+                        {% endfor %}
+                        {% if login_pagination.next_url %}
+                        <a class="admin-btn" href="{{ login_pagination.next_url }}">Siguiente</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </section>
+        </section>
+
+        <section class="admin-tab-panel" data-tab-panel="reset">
+            <section class="admin-panel-card">
                 <h2>Reset por IP</h2>
                 <form method="GET" action="{{ url_for('admin_security_page') }}" class="admin-filters">
                     <input type="text" name="reset_q" placeholder="Buscar por IP o ID" value="{{ reset_q }}" />
@@ -141,38 +252,59 @@
                     <input type="hidden" name="rate_q" value="{{ rate_q }}" />
                     <input type="hidden" name="per_login" value="{{ per_login }}" />
                     <input type="hidden" name="per_rate" value="{{ per_rate }}" />
+                    <input type="hidden" name="tab" value="reset" />
                     <button type="submit" class="admin-btn"><i class="fas fa-search"></i> Filtrar</button>
-                    <a href="{{ url_for('admin_security_page') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
+                    <a href="{{ url_for('admin_security_page', tab='reset') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
                 </form>
                 <div class="admin-table-wrap">
-                    <table class="admin-table">
+                    <table class="admin-table admin-table--security">
                         <thead>
                             <tr>
+                                <th>ID</th>
                                 <th>IP</th>
                                 <th>Intentos</th>
-                                <th>Detalle</th>
+                                <th>Estado</th>
+                                <th>Acciones</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for row in reset_ip_rows %}
                             <tr>
+                                <td>{{ row.id }}</td>
                                 <td>{{ row.ip }}</td>
                                 <td>{{ row.attempts }}</td>
-                                <td>
-                                    <button
-                                        type="button"
-                                        class="admin-btn"
-                                        data-title="Reset por IP"
-                                        data-lines='[
-                                            {"label":"IP","value":"{{ row.ip or "-" }}"},
-                                            {"label":"Intentos","value":"{{ row.attempts }}"},
-                                            {"label":"Primer intento","value":"{{ row.first_attempt_at.strftime("%Y-%m-%d %H:%M:%S") if row.first_attempt_at else "-" }}"},
-                                            {"label":"Bloqueado hasta","value":"{{ row.blocked_until.strftime("%Y-%m-%d %H:%M:%S") if row.blocked_until else "-" }}"}
-                                        ]'
-                                        onclick="openSecurityDetail(this)"
-                                    >
-                                        <i class="fas fa-eye"></i> Ver detalle
-                                    </button>
+                                <td><span class="status-pill {{ row.status_key }}">{{ row.status_label }}</span></td>
+                                <td class="admin-actions-cell">
+                                    <div class="admin-actions-grid">
+                                        <button
+                                            type="button"
+                                            class="admin-btn"
+                                            data-title="Reset por IP #{{ row.id }}"
+                                            data-lines='{{ [
+                                                {"label":"IP","value":(row.ip or "-")},
+                                                {"label":"Intentos","value":row.attempts},
+                                                {"label":"Primer intento","value":(row.first_attempt_at.strftime("%Y-%m-%d %H:%M:%S") if row.first_attempt_at else "-")},
+                                                {"label":"Bloqueado hasta","value":row.blocked_until_human}
+                                            ] | tojson }}'
+                                            onclick="openSecurityDetail(this)"
+                                        >
+                                            <i class="fas fa-eye"></i> Ver detalle
+                                        </button>
+                                        {% if can_security_actions and row.can_unlock %}
+                                        <form id="resetUnlockForm{{ row.id }}" method="POST" action="{{ url_for('admin_security_unlock_reset_ip', row_id=row.id) }}">
+                                            <input type="hidden" name="return_to" value="{{ request.full_path }}" />
+                                            <button
+                                                type="button"
+                                                class="admin-btn admin-btn-ghost security-action-trigger"
+                                                data-form-id="resetUnlockForm{{ row.id }}"
+                                                data-title="Desbloquear reset por IP"
+                                                data-message="Se reiniciara el contador y bloqueo del registro de reset por IP #{{ row.id }}."
+                                            >
+                                                <i class="fas fa-unlock"></i> Desbloquear
+                                            </button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -197,9 +329,11 @@
                         {% endif %}
                     </div>
                 </div>
-            </article>
+            </section>
+        </section>
 
-            <article class="admin-panel-card">
+        <section class="admin-tab-panel" data-tab-panel="rate">
+            <section class="admin-panel-card">
                 <h2>Rate limits</h2>
                 <form method="GET" action="{{ url_for('admin_security_page') }}" class="admin-filters">
                     <input type="text" name="rate_q" placeholder="Buscar por key o ID" value="{{ rate_q }}" />
@@ -212,38 +346,59 @@
                     <input type="hidden" name="reset_q" value="{{ reset_q }}" />
                     <input type="hidden" name="per_login" value="{{ per_login }}" />
                     <input type="hidden" name="per_reset" value="{{ per_reset }}" />
+                    <input type="hidden" name="tab" value="rate" />
                     <button type="submit" class="admin-btn"><i class="fas fa-search"></i> Filtrar</button>
-                    <a href="{{ url_for('admin_security_page') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
+                    <a href="{{ url_for('admin_security_page', tab='rate') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
                 </form>
                 <div class="admin-table-wrap">
-                    <table class="admin-table">
+                    <table class="admin-table admin-table--security">
                         <thead>
                             <tr>
+                                <th>ID</th>
                                 <th>Key</th>
                                 <th>Count</th>
-                                <th>Detalle</th>
+                                <th>Estado</th>
+                                <th>Acciones</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for row in rate_limit_rows %}
                             <tr>
+                                <td>{{ row.id }}</td>
                                 <td><small>{{ row.key }}</small></td>
                                 <td>{{ row.count }}</td>
-                                <td>
-                                    <button
-                                        type="button"
-                                        class="admin-btn"
-                                        data-title="Rate limit"
-                                        data-lines='[
-                                            {"label":"Key","value":"{{ row.key or "-" }}"},
-                                            {"label":"Count","value":"{{ row.count }}"},
-                                            {"label":"Ventana","value":"{{ row.window_start.strftime("%Y-%m-%d %H:%M:%S") if row.window_start else "-" }}"},
-                                            {"label":"Bloqueado hasta","value":"{{ row.blocked_until.strftime("%Y-%m-%d %H:%M:%S") if row.blocked_until else "-" }}"}
-                                        ]'
-                                        onclick="openSecurityDetail(this)"
-                                    >
-                                        <i class="fas fa-eye"></i> Ver detalle
-                                    </button>
+                                <td><span class="status-pill {{ row.status_key }}">{{ row.status_label }}</span></td>
+                                <td class="admin-actions-cell">
+                                    <div class="admin-actions-grid">
+                                        <button
+                                            type="button"
+                                            class="admin-btn"
+                                            data-title="Rate limit #{{ row.id }}"
+                                            data-lines='{{ [
+                                                {"label":"Key","value":(row.key or "-")},
+                                                {"label":"Count","value":row.count},
+                                                {"label":"Ventana","value":(row.window_start.strftime("%Y-%m-%d %H:%M:%S") if row.window_start else "-")},
+                                                {"label":"Bloqueado hasta","value":row.blocked_until_human}
+                                            ] | tojson }}'
+                                            onclick="openSecurityDetail(this)"
+                                        >
+                                            <i class="fas fa-eye"></i> Ver detalle
+                                        </button>
+                                        {% if can_security_actions and row.can_unlock %}
+                                        <form id="rateClearForm{{ row.id }}" method="POST" action="{{ url_for('admin_security_clear_rate_limit', row_id=row.id) }}">
+                                            <input type="hidden" name="return_to" value="{{ request.full_path }}" />
+                                            <button
+                                                type="button"
+                                                class="admin-btn admin-btn-ghost security-action-trigger"
+                                                data-form-id="rateClearForm{{ row.id }}"
+                                                data-title="Limpiar rate limit"
+                                                data-message="Se reiniciara el contador y bloqueo del rate limit #{{ row.id }}."
+                                            >
+                                                <i class="fas fa-broom"></i> Limpiar
+                                            </button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -268,62 +423,352 @@
                         {% endif %}
                     </div>
                 </div>
-            </article>
+            </section>
+        </section>
+
+        <section class="admin-tab-panel" data-tab-panel="acciones">
+            <section class="admin-grid-two">
+                <article class="admin-panel-card">
+                    <h2>Bloqueo manual por correo</h2>
+                    <form method="POST" action="{{ url_for('admin_security_block_email') }}" class="admin-form-grid">
+                        <input type="hidden" name="return_to" value="{{ request.full_path }}" />
+                        <label>
+                            Correo
+                            <input type="email" name="email" required placeholder="usuario@correo.com" />
+                        </label>
+                        <div class="admin-grid-two" style="gap:8px;">
+                            <label>
+                                Duracion
+                                <input type="number" min="1" name="duration_value" value="6" required />
+                            </label>
+                            <label>
+                                Unidad
+                                <select name="duration_unit">
+                                    <option value="minutes">Minutos</option>
+                                    <option value="hours" selected>Horas</option>
+                                    <option value="days">Dias</option>
+                                </select>
+                            </label>
+                        </div>
+                        <label>
+                            Motivo
+                            <input type="text" name="reason" maxlength="255" placeholder="Intentos anormales de acceso" />
+                        </label>
+                        <button type="submit" class="admin-btn primary" {% if not can_security_actions %}disabled{% endif %}>
+                            <i class="fas fa-ban"></i> Bloquear correo
+                        </button>
+                    </form>
+                </article>
+
+                <article class="admin-panel-card">
+                    <h2>Bloqueo manual por IP</h2>
+                    <form method="POST" action="{{ url_for('admin_security_block_ip') }}" class="admin-form-grid">
+                        <input type="hidden" name="return_to" value="{{ request.full_path }}" />
+                        <label>
+                            IP
+                            <input type="text" name="ip" required placeholder="203.0.113.14" />
+                        </label>
+                        <div class="admin-grid-two" style="gap:8px;">
+                            <label>
+                                Duracion
+                                <input type="number" min="1" name="duration_value" value="2" required />
+                            </label>
+                            <label>
+                                Unidad
+                                <select name="duration_unit">
+                                    <option value="minutes">Minutos</option>
+                                    <option value="hours" selected>Horas</option>
+                                    <option value="days">Dias</option>
+                                </select>
+                            </label>
+                        </div>
+                        <label>
+                            Motivo
+                            <input type="text" name="reason" maxlength="255" placeholder="Patron de peticiones sospechoso" />
+                        </label>
+                        <button type="submit" class="admin-btn primary" {% if not can_security_actions %}disabled{% endif %}>
+                            <i class="fas fa-shield-virus"></i> Bloquear IP
+                        </button>
+                    </form>
+                </article>
+            </section>
+
+            <section class="admin-panel-card">
+                <h2>Cierre forzado de sesion</h2>
+                <form method="POST" action="{{ url_for('admin_security_force_logout') }}" class="admin-filters">
+                    <input type="hidden" name="return_to" value="{{ request.full_path }}" />
+                    <input type="email" name="email" required placeholder="correo@usuario.com" />
+                    <button type="submit" class="admin-btn danger" {% if not can_security_actions %}disabled{% endif %}>
+                        <i class="fas fa-power-off"></i> Forzar cierre
+                    </button>
+                </form>
+                <p class="admin-chart-note">En la siguiente peticion del usuario, su sesion se cerrara automaticamente.</p>
+            </section>
+
+            <section class="admin-panel-card">
+                <h2>Bloqueos manuales activos</h2>
+                <form method="GET" action="{{ url_for('admin_security_page') }}" class="admin-filters">
+                    <input type="text" name="block_q" placeholder="Buscar por ID, tipo, target o motivo" value="{{ block_q }}" />
+                    <select name="per_block">
+                        {% for n in per_options %}
+                        <option value="{{ n }}" {% if per_block == n %}selected{% endif %}>{{ n }} por pagina</option>
+                        {% endfor %}
+                    </select>
+                    <input type="hidden" name="tab" value="acciones" />
+                    <button type="submit" class="admin-btn"><i class="fas fa-search"></i> Filtrar</button>
+                    <a href="{{ url_for('admin_security_page', tab='acciones') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
+                </form>
+                <div class="admin-table-wrap">
+                    <table class="admin-table admin-table--security">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Tipo</th>
+                                <th>Objetivo</th>
+                                <th>Expira</th>
+                                <th>Motivo</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in security_blocks %}
+                            <tr>
+                                <td>{{ row.id }}</td>
+                                <td><span class="status-pill {{ row.status_key }}">{{ row.type_label }}</span></td>
+                                <td>{{ row.target }}</td>
+                                <td>{{ row.until_human }}</td>
+                                <td>{{ row.reason or '-' }}</td>
+                                <td class="admin-actions-cell">
+                                    {% if can_security_actions %}
+                                    <form id="blockRemoveForm{{ row.id }}" method="POST" action="{{ url_for('admin_security_remove_block', block_id=row.id) }}">
+                                        <input type="hidden" name="return_to" value="{{ request.full_path }}" />
+                                        <button
+                                            type="button"
+                                            class="admin-btn danger security-action-trigger"
+                                            data-form-id="blockRemoveForm{{ row.id }}"
+                                            data-title="Retirar bloqueo manual"
+                                            data-message="Se retirara el bloqueo #{{ row.id }} sobre {{ row.target }}."
+                                        >
+                                            <i class="fas fa-unlock"></i> Retirar
+                                        </button>
+                                    </form>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="admin-pagination-wrap">
+                    <span>Total bloqueos activos: {{ block_total }}</span>
+                    <div class="admin-pagination">
+                        {% if block_pagination.prev_url %}
+                        <a class="admin-btn" href="{{ block_pagination.prev_url }}">Anterior</a>
+                        {% endif %}
+                        {% for p in block_pagination.pages %}
+                            {% if p.current %}
+                            <span class="admin-page-current">{{ p.num }}</span>
+                            {% else %}
+                            <a class="admin-btn" href="{{ p.url }}">{{ p.num }}</a>
+                            {% endif %}
+                        {% endfor %}
+                        {% if block_pagination.next_url %}
+                        <a class="admin-btn" href="{{ block_pagination.next_url }}">Siguiente</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </section>
         </section>
     </div>
 
     <div id="securityDetailModal" class="admin-modal">
-        <div class="admin-modal-content">
+        <div class="admin-modal-content admin-modal-content--wide">
             <div class="admin-modal-header">
                 <h3 id="securityDetailTitle">Detalle</h3>
                 <button type="button" class="admin-btn" onclick="closeAdminModal('securityDetailModal')">Cerrar</button>
             </div>
-            <div class="admin-modal-body" id="securityDetailBody"></div>
+            <div class="admin-modal-body">
+                <div id="securityDetailGrid" class="admin-user-detail-grid"></div>
+            </div>
         </div>
     </div>
 
+    <div id="securityActionModal" class="admin-modal">
+        <div class="admin-modal-content">
+            <div class="admin-modal-header">
+                <h3 id="securityActionTitle">Confirmar accion</h3>
+                <button type="button" class="admin-btn" onclick="closeAdminModal('securityActionModal')">Cerrar</button>
+            </div>
+            <div class="admin-modal-body">
+                <div class="admin-delete-warning">
+                    <i class="fas fa-circle-exclamation"></i>
+                    <div>
+                        <strong id="securityActionMessage">Confirma para continuar.</strong>
+                        <p>Esta accion impacta controles de seguridad en tiempo real.</p>
+                    </div>
+                </div>
+                <label class="admin-check-confirm">
+                    <input id="securityActionCheck" type="checkbox" />
+                    <span>Confirmo que deseo ejecutar esta accion.</span>
+                </label>
+                <div class="admin-modal-actions">
+                    <button type="button" class="admin-btn" onclick="closeAdminModal('securityActionModal')">Cancelar</button>
+                    <button id="securityActionConfirmBtn" type="button" class="admin-btn primary" disabled>
+                        <i class="fas fa-check"></i> Confirmar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="adminToastHost" class="admin-toast-host" aria-live="polite"></div>
+    <script id="securityTabsConfig" type="application/json">{{ {'initialTab': request.args.get('tab', 'resumen')} | tojson }}</script>
     <script>
+        function readSecurityJson(id, fallback) {
+            const el = document.getElementById(id);
+            if (!el) return fallback;
+            try { return JSON.parse(el.textContent || ''); } catch (_err) { return fallback; }
+        }
+
+        function switchSecurityTab(tabId, syncUrl = true) {
+            document.querySelectorAll('.admin-tab-btn').forEach(btn => btn.classList.toggle('is-active', btn.dataset.tab === tabId));
+            document.querySelectorAll('.admin-tab-panel').forEach(panel => panel.classList.toggle('is-active', panel.dataset.tabPanel === tabId));
+            if (syncUrl) {
+                const url = new URL(window.location.href);
+                url.searchParams.set('tab', tabId);
+                window.history.replaceState({}, '', url.toString());
+            }
+        }
+
+        function initSecurityTabs() {
+            const cfg = readSecurityJson('securityTabsConfig', { initialTab: 'resumen' });
+            const initialTab = (cfg && typeof cfg.initialTab === 'string') ? cfg.initialTab : 'resumen';
+            const validTabs = new Set(['resumen', 'login', 'reset', 'rate', 'acciones']);
+            switchSecurityTab(validTabs.has(initialTab) ? initialTab : 'resumen', false);
+            document.querySelectorAll('.admin-tab-btn').forEach(btn => {
+                btn.addEventListener('click', function() { switchSecurityTab(btn.dataset.tab); });
+            });
+        }
+
+        function syncModalBodyLock() {
+            document.body.classList.toggle('admin-modal-open', !!document.querySelector('.admin-modal.show'));
+        }
+
         function openAdminModal(id){
             const el = document.getElementById(id);
             if (el) el.classList.add('show');
+            syncModalBodyLock();
         }
         function closeAdminModal(id){
             const el = document.getElementById(id);
             if (el) el.classList.remove('show');
+            syncModalBodyLock();
         }
+
+        function escapeHtml(value) {
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         function openSecurityDetail(btn){
             const title = btn.dataset.title || 'Detalle';
             document.getElementById('securityDetailTitle').textContent = title;
-            const body = document.getElementById('securityDetailBody');
-            body.innerHTML = '';
+            const host = document.getElementById('securityDetailGrid');
+            host.innerHTML = '';
             let lines = [];
-            try {
-                lines = JSON.parse(btn.dataset.lines || '[]');
-            } catch (e) {
-                lines = [];
+            try { lines = JSON.parse(btn.dataset.lines || '[]'); } catch (_err) { lines = []; }
+            if (!lines.length) {
+                host.innerHTML = '<div class="admin-user-detail-card"><span>Detalle</span><strong>Sin datos</strong></div>';
+            } else {
+                host.innerHTML = lines.map(item => (
+                    '<div class="admin-user-detail-card"><span>' + escapeHtml(item.label || '-') + '</span><strong>' + escapeHtml(item.value || '-') + '</strong></div>'
+                )).join('');
             }
-            lines.forEach(item => {
-                const p = document.createElement('p');
-                const strong = document.createElement('strong');
-                strong.textContent = (item.label || '-') + ': ';
-                const span = document.createElement('span');
-                span.textContent = item.value || '-';
-                p.appendChild(strong);
-                p.appendChild(span);
-                body.appendChild(p);
-            });
             openAdminModal('securityDetailModal');
         }
+
+        function showCenterToast(message, type) {
+            const host = document.getElementById('adminToastHost');
+            if (!host || !message) return;
+            const toast = document.createElement('article');
+            toast.className = 'admin-toast admin-toast--' + (type || 'success');
+            toast.textContent = message;
+            host.appendChild(toast);
+            requestAnimationFrame(() => toast.classList.add('show'));
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 260);
+            }, 2600);
+        }
+
+        function mountFlashToasts() {
+            const flashes = document.querySelectorAll('.admin-flashes .admin-flash');
+            flashes.forEach(flash => {
+                const text = flash.textContent ? flash.textContent.trim() : '';
+                const cls = flash.className || '';
+                const type = cls.includes('error') || cls.includes('danger')
+                    ? 'error'
+                    : (cls.includes('warning') ? 'warn' : 'success');
+                showCenterToast(text, type);
+            });
+            const flashWrap = document.querySelector('.admin-flashes');
+            if (flashWrap && flashes.length) flashWrap.style.display = 'none';
+        }
+
+        let pendingSecurityFormId = '';
+        function openSecurityActionConfirm(btn) {
+            const formId = btn.dataset.formId || '';
+            if (!formId) return;
+            pendingSecurityFormId = formId;
+            document.getElementById('securityActionTitle').textContent = btn.dataset.title || 'Confirmar accion';
+            document.getElementById('securityActionMessage').textContent = btn.dataset.message || 'Deseas continuar con esta accion?';
+            const check = document.getElementById('securityActionCheck');
+            const confirmBtn = document.getElementById('securityActionConfirmBtn');
+            if (check) check.checked = false;
+            if (confirmBtn) confirmBtn.disabled = true;
+            openAdminModal('securityActionModal');
+        }
+
         document.addEventListener('click', function(e){
+            const trigger = e.target.closest('.security-action-trigger');
+            if (trigger) {
+                e.preventDefault();
+                openSecurityActionConfirm(trigger);
+            }
             if (e.target.classList.contains('admin-modal')) {
                 e.target.classList.remove('show');
+                syncModalBodyLock();
             }
         });
+
         document.addEventListener('keydown', function(e){
             if (e.key === 'Escape') {
                 document.querySelectorAll('.admin-modal.show').forEach(m => m.classList.remove('show'));
+                syncModalBodyLock();
             }
         });
+
+        const securityActionCheck = document.getElementById('securityActionCheck');
+        const securityActionConfirmBtn = document.getElementById('securityActionConfirmBtn');
+        if (securityActionCheck && securityActionConfirmBtn) {
+            securityActionCheck.addEventListener('change', function() {
+                securityActionConfirmBtn.disabled = !securityActionCheck.checked;
+            });
+            securityActionConfirmBtn.addEventListener('click', function() {
+                if (!securityActionCheck.checked || !pendingSecurityFormId) return;
+                const form = document.getElementById(pendingSecurityFormId);
+                closeAdminModal('securityActionModal');
+                if (form) form.submit();
+                pendingSecurityFormId = '';
+            });
+        }
+
+        initSecurityTabs();
+        mountFlashToasts();
     </script>
 </body>
 </html>

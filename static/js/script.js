@@ -41,10 +41,56 @@ function wireDeleteCheckbox() {
   const check = document.getElementById("deleteCheck");
   const btn = document.getElementById("btnDeleteConfirm");
   if (check && btn) {
-    btn.disabled = !check.checked;
+    btn.disabled = (btn.dataset.loading === "1") || !check.checked;
     check.onchange = () => {
-      btn.disabled = !check.checked;
+      btn.disabled = (btn.dataset.loading === "1") || !check.checked;
     };
+  }
+}
+
+function setDeleteModalLoading(loading) {
+  const btn = document.getElementById("btnDeleteConfirm");
+  if (!btn) return;
+  btn.dataset.loading = loading ? "1" : "0";
+  if (!btn.dataset.originalText) btn.dataset.originalText = btn.innerHTML;
+  if (loading) {
+    btn.innerHTML = "Verificando...";
+    btn.disabled = true;
+  } else {
+    btn.innerHTML = btn.dataset.originalText || "Eliminar";
+  }
+  wireDeleteCheckbox();
+}
+
+function renderDeleteModalInfo(meta) {
+  const msgEl = document.getElementById("deleteModalMessage");
+  const warningWrap = document.getElementById("deleteSharedWarning");
+  const warningText = document.getElementById("deleteSharedWarningText");
+  const checkLabel = document.getElementById("deleteCheckLabel");
+
+  if (msgEl) {
+    msgEl.innerHTML = "Estas seguro? Esta accion <b>no se puede deshacer</b>.";
+  }
+  if (checkLabel) {
+    checkLabel.textContent = "Si, estoy seguro de eliminarla.";
+  }
+  if (warningWrap) warningWrap.classList.add("hidden");
+  if (warningText) warningText.textContent = "";
+
+  if (!meta || !meta.has_shared) return;
+
+  if (warningWrap) warningWrap.classList.remove("hidden");
+  if (warningText) {
+    const links = Number(meta.shared_links || 0);
+    const viewers = Number(meta.active_viewers || 0);
+    const sessions = Number(meta.active_sessions || 0);
+    warningText.textContent =
+      `Enlaces compartidos: ${links}. ` +
+      `Personas activas ahora: ${viewers}. Sesiones activas: ${sessions}. ` +
+      `Si eliminas, se cerrará el acceso compartido y las sesiones activas.`;
+  }
+  if (checkLabel) {
+    checkLabel.textContent = "Si, cerrar acceso compartido y eliminar conversacion.";
   }
 }
 
@@ -723,21 +769,47 @@ function escapeHtml(str) {
 
 function abrirDeleteModal(id) {
   deleteChatId = id;
-  isDeleting = false; // ✅ por si quedó trabado
+  isDeleting = false;
 
   const modal = document.getElementById("deleteModal");
   const check = document.getElementById("deleteCheck");
-  const btn = document.getElementById("btnDeleteConfirm");
+  const msgEl = document.getElementById("deleteModalMessage");
 
   if (check) check.checked = false;
-  if (btn) {
-    btn.disabled = true;
-    btn.dataset.originalText = btn.innerHTML;
-    btn.innerHTML = "Eliminar";
+  if (msgEl) {
+    msgEl.innerHTML = "Estas seguro? Esta accion <b>no se puede deshacer</b>.";
   }
+  renderDeleteModalInfo(null);
+  setDeleteModalLoading(true);
 
   modal?.classList.add("show");
   wireDeleteCheckbox();
+
+  const requestedId = String(id);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+  fetch(`/delete_chat_info/${id}`, { signal: controller.signal })
+    .then(async (res) => {
+      clearTimeout(timeoutId);
+      const data = await res.json().catch(() => ({}));
+      if (String(deleteChatId || "") !== requestedId) return;
+      if (!res.ok || !data.success) {
+        renderDeleteModalInfo(null);
+        showToast(data.error || "No se pudo verificar el estado compartido.");
+        return;
+      }
+      renderDeleteModalInfo(data);
+    })
+    .catch(() => {
+      if (String(deleteChatId || "") !== requestedId) return;
+      renderDeleteModalInfo(null);
+      showToast("No se pudo verificar si el chat esta compartido.");
+    })
+    .finally(() => {
+      if (String(deleteChatId || "") !== requestedId) return;
+      setDeleteModalLoading(false);
+    });
 }
 
 function cerrarDeleteModal(keepId = false) {
@@ -750,7 +822,6 @@ async function confirmarEliminarChat() {
   isDeleting = true;
 
   const id = deleteChatId;
-
   const btn = document.getElementById("btnDeleteConfirm");
   if (btn) {
     btn.disabled = true;
@@ -759,18 +830,9 @@ async function confirmarEliminarChat() {
 
   cerrarDeleteModal(true);
 
-  // quitar de la lista
-  document.getElementById(`chat-item-${id}`)?.remove();
-
-  // si estoy dentro del chat eliminado, limpiar vista
   const currentIdEl = document.getElementById("current-chat-id");
   const activeChatId = (currentIdEl?.value || "").trim();
   const wasActive = activeChatId === String(id);
-
-  if (wasActive) {
-    currentIdEl.value = "";
-    nuevaConversacionInstant();
-  }
 
   try {
     const controller = new AbortController();
@@ -782,12 +844,26 @@ async function confirmarEliminarChat() {
     });
 
     clearTimeout(t);
+    const data = await res.json().catch(() => ({}));
 
-    if (!res.ok) showToast("❌ No se pudo eliminar. Intenta otra vez.");
-    else showToast("✅ Chat eliminado");
-
+    if (!res.ok || !data.success) {
+      showToast(data.error || "No se pudo eliminar. Intenta otra vez.");
+    } else {
+      document.getElementById(`chat-item-${id}`)?.remove();
+      if (wasActive) {
+        currentIdEl.value = "";
+        nuevaConversacionInstant();
+      }
+      const closedSessions = Number(data.viewer_sessions_closed || 0);
+      const removedShares = Number(data.shared_links_deleted || 0);
+      if (removedShares > 0) {
+        showToast(`Chat eliminado. Se cerraron ${closedSessions} sesion(es) compartidas.`);
+      } else {
+        showToast("Chat eliminado");
+      }
+    }
   } catch (err) {
-    showToast("⚠️ Se tardó demasiado. Revisa tu conexión.");
+    showToast("Se tardo demasiado. Revisa tu conexion.");
   } finally {
     isDeleting = false;
     deleteChatId = null;
@@ -1525,12 +1601,18 @@ function openRenameModal(chatId) {
   }
   const input = document.getElementById("renameChatInput");
   const currentTitle = document.querySelector(`#chat-item-${renameChatId} .chat-item span`)?.textContent?.trim() || "";
-  if (input) input.value = currentTitle;
+  if (input) {
+    input.disabled = false;
+    input.readOnly = false;
+    input.value = currentTitle;
+  }
   openModal("renameModal");
-  setTimeout(() => {
-    input?.focus();
-    input?.select();
-  }, 40);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      input?.focus({ preventScroll: true });
+      input?.select();
+    });
+  });
 }
 
 function closeRenameModal(clearState = true) {
@@ -1550,11 +1632,15 @@ async function confirmRenameChat() {
 
   if (btn) btn.disabled = true;
   try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 8000);
     const res = await fetch(`/rename_chat/${renameChatId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: newTitle })
+      body: JSON.stringify({ title: newTitle }),
+      signal: controller.signal
     });
+    clearTimeout(t);
     const data = await res.json();
     if (!res.ok || !data.success) {
       showToast(data.error || "No se pudo renombrar");
@@ -1565,7 +1651,7 @@ async function confirmRenameChat() {
     closeRenameModal();
     showToast("Nombre actualizado");
   } catch (e) {
-    showToast("Error al renombrar");
+    showToast("Error al renombrar o tiempo agotado.");
   } finally {
     if (btn) btn.disabled = false;
   }

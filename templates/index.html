@@ -328,13 +328,18 @@
             </div>
 
             <div class="modal-body">
-                <p style="margin-top:0; color: var(--text-dim);">
-                    ¿Estás seguro? Esta acción <b>no se puede deshacer</b>.
+                <p id="deleteModalMessage" style="margin-top:0; color: var(--text-dim);">
+                    Estas seguro? Esta accion <b>no se puede deshacer</b>.
                 </p>
+
+                <div id="deleteSharedWarning" class="delete-shared-warning hidden">
+                    <div class="delete-shared-warning-title">Este chat tiene enlace(s) compartido(s).</div>
+                    <div id="deleteSharedWarningText"></div>
+                </div>
 
                 <label class="confirm-check">
                     <input type="checkbox" id="deleteCheck">
-                    Sí, estoy seguro de eliminarla.
+                    <span id="deleteCheckLabel">Si, estoy seguro de eliminarla.</span>
                 </label>
             </div>
 

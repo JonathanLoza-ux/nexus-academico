@@ -67,6 +67,21 @@
                 <button type="submit" class="admin-btn"><i class="fas fa-search"></i> Filtrar</button>
                 <a href="{{ url_for('admin_users_page') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
             </form>
+            {% if can_manage_users %}
+            <form method="POST" action="{{ url_for('admin_users_bulk') }}" id="adminBulkForm" class="admin-bulk-bar">
+                <label class="admin-bulk-label" for="bulkActionSelect">Accion masiva</label>
+                <select id="bulkActionSelect" name="bulk_action">
+                    <option value="">Selecciona una accion...</option>
+                    <option value="activate">Activar seleccionados</option>
+                    <option value="deactivate">Desactivar seleccionados</option>
+                    {% if can_export_reports %}
+                    <option value="export_xlsx">Exportar seleccionados (.xlsx)</option>
+                    {% endif %}
+                </select>
+                <span id="bulkSelectedCounter" class="admin-bulk-counter">0 seleccionados</span>
+                <button type="submit" class="admin-btn primary"><i class="fas fa-bolt"></i> Aplicar</button>
+            </form>
+            {% endif %}
             {% if 'export_reports' in admin_permissions %}
             <div style="display:flex; gap:8px; margin-bottom:10px;">
                 <a class="admin-btn" href="{{ url_for('admin_export_users_xlsx') }}">
@@ -78,6 +93,11 @@
                 <table class="admin-table">
                     <thead>
                         <tr>
+                            {% if can_manage_users %}
+                            <th class="admin-col-check">
+                                <input type="checkbox" id="bulkSelectAll" />
+                            </th>
+                            {% endif %}
                             <th>ID</th>
                             <th>Nombre</th>
                             <th>Email</th>
@@ -91,6 +111,7 @@
                     <tbody>
                         {% for u in all_users %}
                         {% set is_suspended = u.is_active_account and u.suspended_until and u.suspended_until > now_utc %}
+                        {% set is_protected_super = (u.email or '').lower() in super_admin_emails %}
                         {% if not u.is_active_account %}
                             {% set status_label = 'Desactivada' %}
                             {% set status_class = 'off' %}
@@ -102,6 +123,21 @@
                             {% set status_class = 'ok' %}
                         {% endif %}
                         <tr>
+                            {% if can_manage_users %}
+                            <td class="admin-col-check">
+                                <input
+                                    type="checkbox"
+                                    class="bulk-user-check"
+                                    form="adminBulkForm"
+                                    name="user_ids"
+                                    value="{{ u.id }}"
+                                    data-id="{{ u.id }}"
+                                    data-name="{{ u.name or '' }}"
+                                    data-email="{{ u.email or '' }}"
+                                    {% if u.id == current_user.id or (is_protected_super and admin_role != 'super_admin') %}disabled{% endif %}
+                                />
+                            </td>
+                            {% endif %}
                             <td>{{ u.id }}</td>
                             <td><strong>{{ u.name }}</strong></td>
                             <td><small>{{ u.email }}</small></td>
@@ -128,12 +164,15 @@
                                         data-chats="{{ u.chat_count }}"
                                         data-messages="{{ u.message_count }}"
                                         data-is-self="{{ '1' if u.id == current_user.id else '0' }}"
+                                        data-protected-super="{{ '1' if is_protected_super else '0' }}"
                                         onclick="openUserDetailsFromBtn(this)"
                                     >
                                         <i class="fas fa-eye"></i> Ver detalle
                                     </button>
                                     {% if u.id == current_user.id %}
                                     <span class="admin-row-self">Tu cuenta</span>
+                                    {% elif is_protected_super and admin_role != 'super_admin' %}
+                                    <span class="admin-row-self">Cuenta protegida</span>
                                     {% endif %}
                                 </div>
                             </td>
@@ -214,7 +253,7 @@
                 <div class="admin-user-modal-actions" id="userDetailManageBox">
                     <form id="userDetailStatusForm" method="POST" action="">
                         <input type="hidden" id="userDetailStatusAction" name="action" value="" />
-                        <button type="submit" id="userDetailStatusBtn" class="admin-btn">
+                        <button type="submit" id="userDetailStatusBtn" class="admin-btn admin-btn-strong">
                             <i class="fas fa-user-check"></i> Activar
                         </button>
                     </form>
@@ -234,18 +273,21 @@
                                 <option value="months">Meses</option>
                             </select>
                         </div>
-                        <button type="submit" id="userDetailSuspendBtn" class="admin-btn">
+                        <button type="submit" id="userDetailSuspendBtn" class="admin-btn admin-btn-suspend">
                             <i class="fas fa-clock"></i> Suspender
                         </button>
                     </form>
                     <form id="userDetailUnsuspendForm" method="POST" action="">
                         <input type="hidden" name="action" value="clear" />
-                        <button type="submit" id="userDetailUnsuspendBtn" class="admin-btn">
+                        <button type="submit" id="userDetailUnsuspendBtn" class="admin-btn admin-btn-ghost">
                             <i class="fas fa-unlock"></i> Quitar suspension
                         </button>
                     </form>
                     <p id="userDetailSelfNote" class="admin-user-self-note">
                         Esta es tu cuenta. No puedes cambiar tu propio estado o eliminarla desde este panel.
+                    </p>
+                    <p id="userDetailProtectedNote" class="admin-user-self-note">
+                        Esta cuenta de super admin esta protegida. No tienes permiso para desactivar/suspenderla.
                     </p>
                 </div>
                 {% endif %}
@@ -282,9 +324,43 @@
         </div>
     </div>
 
+    <div id="bulkConfirmModal" class="admin-modal">
+        <div class="admin-modal-content admin-modal-content--wide">
+            <div class="admin-modal-header">
+                <h3>Confirmar accion masiva</h3>
+                <button type="button" class="admin-btn" onclick="closeAdminModal('bulkConfirmModal')">Cerrar</button>
+            </div>
+            <div class="admin-modal-body">
+                <div class="admin-delete-warning">
+                    <i class="fas fa-circle-info"></i>
+                    <div>
+                        <strong id="bulkConfirmTitle">-</strong>
+                        <p id="bulkConfirmSubtitle">-</p>
+                    </div>
+                </div>
+                <div class="admin-bulk-preview">
+                    <div class="admin-bulk-preview-head">
+                        <span>Usuarios seleccionados</span>
+                        <strong id="bulkConfirmCount">0</strong>
+                    </div>
+                    <ul id="bulkConfirmList" class="admin-bulk-preview-list"></ul>
+                </div>
+                <div class="admin-modal-actions">
+                    <button type="button" class="admin-btn" onclick="closeAdminModal('bulkConfirmModal')">Cancelar</button>
+                    <button type="button" id="bulkConfirmProceedBtn" class="admin-btn primary">
+                        <i class="fas fa-check"></i> Confirmar y aplicar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="adminToastHost" class="admin-toast-host" aria-live="polite"></div>
 
     <script>
+        let bulkSubmitConfirmed = false;
+        const VIEWER_IS_SUPER_ADMIN = "{{ '1' if admin_role == 'super_admin' else '0' }}" === '1';
+
         function syncModalBodyLock() {
             const hasOpenModal = !!document.querySelector('.admin-modal.show');
             document.body.classList.toggle('admin-modal-open', hasOpenModal);
@@ -325,6 +401,8 @@
             const isSelf = btn.dataset.isSelf === '1';
             const isSuspended = btn.dataset.suspended === '1';
             const suspendedUntil = btn.dataset.suspendedUntil || '';
+            const isProtectedSuper = btn.dataset.protectedSuper === '1';
+            const blockedByProtection = isProtectedSuper && !VIEWER_IS_SUPER_ADMIN;
             const chats = Number(btn.dataset.chats || 0);
             const messages = Number(btn.dataset.messages || 0);
             const ratio = chats > 0 ? (messages / chats).toFixed(1) : (messages > 0 ? messages.toString() : '0');
@@ -346,7 +424,9 @@
             badge.textContent = status;
             const statusLower = status.toLowerCase();
             badge.classList.remove('ok', 'off', 'warn');
-            if (statusLower.includes('suspend')) {
+            if (statusLower.includes('desactiv')) {
+                badge.classList.add('off');
+            } else if (statusLower.includes('suspend')) {
                 badge.classList.add('warn');
             } else if (statusLower.includes('activa')) {
                 badge.classList.add('ok');
@@ -359,6 +439,7 @@
             const statusBtn = document.getElementById('userDetailStatusBtn');
             const deleteBtn = document.getElementById('userDetailDeleteBtn');
             const selfNote = document.getElementById('userDetailSelfNote');
+            const protectedNote = document.getElementById('userDetailProtectedNote');
             const suspendForm = document.getElementById('userDetailSuspendForm');
             const unsuspendForm = document.getElementById('userDetailUnsuspendForm');
             const unsuspendBtn = document.getElementById('userDetailUnsuspendBtn');
@@ -370,15 +451,18 @@
                 statusBtn.innerHTML = isActive
                     ? '<i class="fas fa-user-slash"></i> Desactivar'
                     : '<i class="fas fa-user-check"></i> Activar';
-                statusForm.style.display = isSelf ? 'none' : 'block';
+                statusForm.style.display = (!isSelf && !blockedByProtection) ? 'block' : 'none';
             }
 
             if (selfNote) {
                 selfNote.style.display = isSelf ? 'block' : 'none';
             }
+            if (protectedNote) {
+                protectedNote.style.display = blockedByProtection ? 'block' : 'none';
+            }
 
             if (deleteBtn) {
-                deleteBtn.style.display = isSelf ? 'none' : 'inline-flex';
+                deleteBtn.style.display = (!isSelf && !blockedByProtection) ? 'inline-flex' : 'none';
                 deleteBtn.dataset.userId = id;
                 deleteBtn.dataset.name = name;
                 deleteBtn.dataset.email = email;
@@ -389,11 +473,11 @@
 
             if (suspendForm) {
                 suspendForm.action = '/admin/user_suspend/' + id;
-                suspendForm.style.display = (!isSelf && isActive) ? 'grid' : 'none';
+                suspendForm.style.display = (!isSelf && isActive && !blockedByProtection) ? 'grid' : 'none';
             }
             if (unsuspendForm) {
                 unsuspendForm.action = '/admin/user_suspend/' + id;
-                unsuspendForm.style.display = (!isSelf && isSuspended) ? 'block' : 'none';
+                unsuspendForm.style.display = (!isSelf && isSuspended && !blockedByProtection) ? 'block' : 'none';
             }
             if (unsuspendBtn) {
                 unsuspendBtn.classList.toggle('danger', isSuspended);
@@ -418,6 +502,105 @@
         document.getElementById('deleteConfirmCheck')?.addEventListener('change', function(e){
             const submitBtn = document.getElementById('deleteUserSubmitBtn');
             if (submitBtn) submitBtn.disabled = !e.target.checked;
+        });
+
+        function updateBulkCounter() {
+            const checks = Array.from(document.querySelectorAll('.bulk-user-check:not(:disabled)'));
+            const selected = checks.filter(c => c.checked).length;
+            const counter = document.getElementById('bulkSelectedCounter');
+            if (counter) {
+                counter.textContent = selected + ' seleccionados';
+            }
+            const selectAll = document.getElementById('bulkSelectAll');
+            if (selectAll) {
+                const total = checks.length;
+                selectAll.checked = total > 0 && selected === total;
+                selectAll.indeterminate = selected > 0 && selected < total;
+            }
+        }
+
+        document.getElementById('bulkSelectAll')?.addEventListener('change', function(e){
+            const checks = document.querySelectorAll('.bulk-user-check:not(:disabled)');
+            checks.forEach(c => {
+                c.checked = !!e.target.checked;
+            });
+            updateBulkCounter();
+        });
+
+        document.querySelectorAll('.bulk-user-check').forEach(c => {
+            c.addEventListener('change', updateBulkCounter);
+        });
+
+        document.getElementById('adminBulkForm')?.addEventListener('submit', function(e){
+            const action = (document.getElementById('bulkActionSelect')?.value || '').trim();
+            const selectedChecks = Array.from(document.querySelectorAll('.bulk-user-check:checked'));
+            const selected = selectedChecks.length;
+            if (!action) {
+                e.preventDefault();
+                showCenterToast('Selecciona una accion masiva.', 'error');
+                return;
+            }
+            if (selected < 1) {
+                e.preventDefault();
+                showCenterToast('Selecciona al menos un usuario.', 'error');
+                return;
+            }
+
+            if (bulkSubmitConfirmed) {
+                bulkSubmitConfirmed = false;
+                return;
+            }
+
+            e.preventDefault();
+            const selectedUsers = selectedChecks.map(c => ({
+                id: c.dataset.id || c.value || '',
+                name: c.dataset.name || 'Sin nombre',
+                email: c.dataset.email || 'Sin correo',
+            }));
+            openBulkConfirmModal(action, selectedUsers);
+        });
+
+        function getBulkActionLabel(action) {
+            if (action === 'activate') return 'activar';
+            if (action === 'deactivate') return 'desactivar';
+            if (action === 'export_xlsx') return 'exportar';
+            return 'aplicar';
+        }
+
+        function openBulkConfirmModal(action, users) {
+            const title = document.getElementById('bulkConfirmTitle');
+            const subtitle = document.getElementById('bulkConfirmSubtitle');
+            const count = document.getElementById('bulkConfirmCount');
+            const list = document.getElementById('bulkConfirmList');
+            const proceedBtn = document.getElementById('bulkConfirmProceedBtn');
+            const label = getBulkActionLabel(action);
+
+            if (title) title.textContent = 'Vas a ' + label + ' ' + users.length + ' cuenta(s).';
+            if (subtitle) subtitle.textContent = 'Revisa el detalle antes de confirmar.';
+            if (count) count.textContent = String(users.length);
+            if (list) {
+                list.innerHTML = users.map((u, idx) => (
+                    '<li><span>#' + (idx + 1) + '</span>' +
+                    '<strong>ID ' + u.id + '</strong>' +
+                    '<b>' + u.name + '</b>' +
+                    '<small>' + u.email + '</small></li>'
+                )).join('');
+            }
+            if (proceedBtn) {
+                proceedBtn.onclick = function() {
+                    bulkSubmitConfirmed = true;
+                    closeAdminModal('bulkConfirmModal');
+                    document.getElementById('adminBulkForm')?.submit();
+                };
+            }
+            openAdminModal('bulkConfirmModal');
+        }
+
+        document.getElementById('bulkConfirmModal')?.addEventListener('click', function(e){
+            if (e.target.id === 'bulkConfirmModal') {
+                e.preventDefault();
+                closeAdminModal('bulkConfirmModal');
+            }
         });
 
         function showCenterToast(message, kind) {
@@ -465,6 +648,7 @@
         });
 
         loadFlashToasts();
+        updateBulkCounter();
     </script>
 </body>
 </html>

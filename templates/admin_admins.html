@@ -38,46 +38,149 @@
             {% endif %}
         {% endwith %}
 
-        <section class="admin-kpi-grid">
-            <article class="admin-kpi-card"><span>Usuarios</span><strong>{{ total_users }}</strong></article>
-            <article class="admin-kpi-card"><span>Chats</span><strong>{{ total_chats }}</strong></article>
-            <article class="admin-kpi-card"><span>Mensajes</span><strong>{{ total_messages }}</strong></article>
-            <article class="admin-kpi-card"><span>Admins activos</span><strong>{{ total_admins }}</strong></article>
+        <section class="admin-tabs-nav" id="adminAdminsTabs">
+            <button type="button" class="admin-tab-btn is-active" data-tab="resumen">
+                <i class="fas fa-chart-pie"></i> Resumen
+            </button>
+            <button type="button" class="admin-tab-btn" data-tab="asignar">
+                <i class="fas fa-user-shield"></i> Asignar admin
+            </button>
+            <button type="button" class="admin-tab-btn" data-tab="admins">
+                <i class="fas fa-users-cog"></i> Admins registrados
+            </button>
+            <button type="button" class="admin-tab-btn" data-tab="auditoria">
+                <i class="fas fa-clipboard-list"></i> Auditoria
+            </button>
         </section>
 
-        <section class="admin-panel-card">
-            <h2>Asignar admin</h2>
-            <form method="POST" action="{{ url_for('admin_grant') }}" class="admin-form-grid">
-                <label>
-                    Correo de usuario
-                    <input type="email" name="email" required placeholder="usuario@correo.com" />
-                </label>
-                <label>
-                    Rol
-                    <select name="role">
-                        <option value="admin">Admin</option>
-                        <option value="super_admin">Super Admin</option>
-                    </select>
-                </label>
-                <div class="admin-perms-wrap">
-                    <p>Permisos (si no marcas, se aplican permisos base)</p>
-                    <div class="admin-perms-grid">
-                        {% for perm in all_permissions %}
-                        <label>
-                            <input type="checkbox" name="permissions" value="{{ perm }}" />
-                            <span>{{ permission_labels_es.get(perm, perm) }}</span>
-                        </label>
+        <section class="admin-tab-panel is-active" data-tab-panel="resumen">
+            <section class="admin-kpi-grid">
+                <article class="admin-kpi-card"><span>Usuarios</span><strong>{{ total_users }}</strong></article>
+                <article class="admin-kpi-card"><span>Chats</span><strong>{{ total_chats }}</strong></article>
+                <article class="admin-kpi-card"><span>Mensajes</span><strong>{{ total_messages }}</strong></article>
+                <article class="admin-kpi-card"><span>Admins activos</span><strong>{{ total_admins }}</strong></article>
+            </section>
+            <section class="admin-grid-two" style="margin-top:12px;">
+                <article class="admin-panel-card">
+                    <h2>Resumen operativo</h2>
+                    <p class="admin-chart-note">
+                        Estado de roles, actividad y auditoría reciente del equipo admin.
+                    </p>
+                    <div class="admin-health-list">
+                        <div class="admin-health-item">
+                            <span><i class="fas fa-crown"></i> Super Admin</span>
+                            <strong class="warn">{{ admins_super_total }}</strong>
+                        </div>
+                        <div class="admin-health-item">
+                            <span><i class="fas fa-user-shield"></i> Admin normal</span>
+                            <strong class="ok">{{ admins_standard_total }}</strong>
+                        </div>
+                        <div class="admin-health-item">
+                            <span><i class="fas fa-circle-check"></i> Cuentas activas</span>
+                            <strong class="ok">{{ admins_active_total }}</strong>
+                        </div>
+                        <div class="admin-health-item">
+                            <span><i class="fas fa-user-clock"></i> Con actividad reciente</span>
+                            <strong class="warn">{{ admins_with_activity_total }}</strong>
+                        </div>
+                    </div>
+                </article>
+                <article class="admin-panel-card">
+                    <h2>Últimas acciones</h2>
+                    {% if admins_recent_activity %}
+                    <div class="admin-activity-list">
+                        {% for item in admins_recent_activity %}
+                        <article class="admin-activity-item admin-activity-item--{{ item.tone }}">
+                            <div class="admin-activity-icon">
+                                <i class="fas {{ item.icon }}"></i>
+                            </div>
+                            <div class="admin-activity-body">
+                                <div class="admin-activity-line">
+                                    <strong>{{ item.title }}</strong>
+                                    <span>{{ item.when }}</span>
+                                </div>
+                                <small>{{ item.actor }} | {{ item.detail }}</small>
+                            </div>
+                        </article>
                         {% endfor %}
                     </div>
-                </div>
-                <button type="submit" class="admin-btn primary">
-                    <i class="fas fa-user-shield"></i> Guardar permisos
-                </button>
-            </form>
+                    {% else %}
+                    <p class="admin-chart-note">Aún no hay acciones registradas.</p>
+                    {% endif %}
+                </article>
+            </section>
         </section>
 
-        <section class="admin-grid-two">
-            <article class="admin-panel-card">
+        <section class="admin-tab-panel" data-tab-panel="asignar">
+            <section class="admin-panel-card">
+                <h2>Asignar admin</h2>
+                <div class="admin-perm-presets">
+                    <span>Presets rápidos:</span>
+                    <button type="button" class="admin-btn" data-preset="base" onclick="applyAdminPreset(this)">
+                        <i class="fas fa-user"></i> Admin basico
+                    </button>
+                    <button type="button" class="admin-btn" data-preset="soporte" onclick="applyAdminPreset(this)">
+                        <i class="fas fa-headset"></i> Admin soporte
+                    </button>
+                    <button type="button" class="admin-btn" data-preset="auditor" onclick="applyAdminPreset(this)">
+                        <i class="fas fa-clipboard-check"></i> Admin auditor
+                    </button>
+                    <button type="button" class="admin-btn" data-preset="all" onclick="applyAdminPreset(this)">
+                        <i class="fas fa-crown"></i> Acceso total
+                    </button>
+                    <button type="button" class="admin-btn" onclick="clearAdminPreset()">
+                        <i class="fas fa-eraser"></i> Limpiar seleccion
+                    </button>
+                </div>
+                <div class="admin-assign-helper">
+                    <p><strong>Recomendación:</strong> aplica un preset y luego ajusta permisos puntuales.</p>
+                    <small>Super Admin otorga control total. Asígnalo solo cuando sea necesario.</small>
+                </div>
+                <form method="POST" action="{{ url_for('admin_grant') }}" class="admin-form-grid">
+                    <label>
+                        Correo de usuario
+                        <input type="email" name="email" required placeholder="usuario@correo.com" />
+                    </label>
+                    <label>
+                        Rol
+                        <select name="role">
+                            <option value="admin">Admin</option>
+                            <option value="super_admin">Super Admin</option>
+                        </select>
+                    </label>
+                    <div class="admin-perms-wrap">
+                        <p>Permisos (si no marcas, se aplican permisos base)</p>
+                        <div class="admin-perm-group-grid">
+                            {% for group in permission_groups_es %}
+                            <article class="admin-perm-group-card">
+                                <h4><i class="fas {{ group.icon }}"></i> {{ group.title }}</h4>
+                                <div class="admin-perms-grid">
+                                    {% for perm in group.codes %}
+                                    <label>
+                                        <input type="checkbox" name="permissions" value="{{ perm }}" class="admin-perm-check" />
+                                        <span>{{ permission_labels_es.get(perm, perm) }}</span>
+                                    </label>
+                                    {% endfor %}
+                                </div>
+                            </article>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="admin-perm-preview">
+                        <p>Resumen de permisos seleccionados</p>
+                        <div id="adminPermPreviewList" class="admin-perm-preview-list">
+                            <span class="admin-perm-preview-empty">Sin permisos seleccionados (se aplicaran los permisos base).</span>
+                        </div>
+                    </div>
+                    <button type="submit" class="admin-btn primary">
+                        <i class="fas fa-user-shield"></i> Guardar permisos
+                    </button>
+                </form>
+            </section>
+        </section>
+
+        <section class="admin-tab-panel" data-tab-panel="admins">
+            <section class="admin-panel-card">
                 <h2>Admins registrados</h2>
                 <form method="GET" action="{{ url_for('admin_admins_page') }}" class="admin-filters">
                     <input type="text" name="admins_q" placeholder="Buscar por ID, nombre o correo" value="{{ admins_q }}" />
@@ -97,10 +200,14 @@
                         {% endfor %}
                     </select>
                     <input type="hidden" name="logs_q" value="{{ logs_q }}" />
+                    <input type="hidden" name="logs_actor" value="{{ logs_actor }}" />
                     <input type="hidden" name="logs_action" value="{{ logs_action }}" />
+                    <input type="hidden" name="logs_date_from" value="{{ logs_date_from }}" />
+                    <input type="hidden" name="logs_date_to" value="{{ logs_date_to }}" />
                     <input type="hidden" name="per_logs" value="{{ per_logs }}" />
+                    <input type="hidden" name="tab" value="admins" />
                     <button type="submit" class="admin-btn"><i class="fas fa-search"></i> Filtrar</button>
-                    <a href="{{ url_for('admin_admins_page') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
+                    <a href="{{ url_for('admin_admins_page', tab='admins') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
                 </form>
 
                 <div class="admin-table-wrap">
@@ -108,7 +215,10 @@
                         <thead>
                             <tr>
                                 <th>Usuario</th>
+                                <th>Rol</th>
                                 <th>Estado</th>
+                                <th>Asignado</th>
+                                <th>Ultima actividad</th>
                                 <th>Detalle</th>
                             </tr>
                         </thead>
@@ -116,8 +226,20 @@
                             {% for row in admins_data %}
                             <tr>
                                 <td>
-                                    <strong>{{ row.user_row.name }}</strong><br />
-                                    <small>{{ row.user_row.email }}</small>
+                                    <div class="admin-person-cell">
+                                        <span class="admin-mini-avatar">{{ (row.user_row.name or "U")[:1] | upper }}</span>
+                                        <div>
+                                            <strong>{{ row.user_row.name }}</strong><br />
+                                            <small>{{ row.user_row.email }}</small>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
+                                    {% if row.role_row.role == 'super_admin' %}
+                                    <span class="admin-role-badge super">Super Admin</span>
+                                    {% else %}
+                                    <span class="admin-role-badge admin">Admin</span>
+                                    {% endif %}
                                 </td>
                                 <td>
                                     {% if row.role_row.is_active %}
@@ -126,19 +248,23 @@
                                     <span class="status-pill off">Inactivo</span>
                                     {% endif %}
                                 </td>
+                                <td>{{ row.role_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if row.role_row.created_at else '-' }}</td>
+                                <td>{{ row.last_activity_ago }}</td>
                                 <td>
                                     <button
                                         type="button"
                                         class="admin-btn"
                                         data-name="{{ row.user_row.name }}"
                                         data-email="{{ row.user_row.email }}"
-                                        data-role="{{ 'Super Admin' if row.role_row.role == 'super_admin' else 'Admin' }}"
+                                        data-role="{{ row.role_label }}"
                                         data-permissions="{{ (row.permission_labels | join(', ')) if row.permission_labels else 'Sin permisos extra' }}"
                                         data-state="{{ 'Activo' if row.role_row.is_active else 'Inactivo' }}"
                                         data-created="{{ row.role_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if row.role_row.created_at else '-' }}"
+                                        data-last-activity="{{ row.last_activity_ago }}"
                                         data-user-id="{{ row.user_row.id }}"
                                         data-revoke-url="{{ url_for('admin_revoke', user_id=row.user_row.id) }}"
-                                        data-can-revoke="{{ '1' if row.user_row.id != current_user.id else '0' }}"
+                                        data-can-revoke="{{ '1' if row.user_row.id != current_user.id and not row.is_protected else '0' }}"
+                                        data-protected="{{ '1' if row.is_protected else '0' }}"
                                         onclick="openAdminRoleDetail(this)"
                                     >
                                         <i class="fas fa-eye"></i> Ver detalle
@@ -168,13 +294,23 @@
                         {% endif %}
                     </div>
                 </div>
-            </article>
+            </section>
+        </section>
 
-            <article class="admin-panel-card">
+        <section class="admin-tab-panel" data-tab-panel="auditoria">
+            <section class="admin-panel-card">
                 <h2>Auditoria admin</h2>
                 <form method="GET" action="{{ url_for('admin_admins_page') }}" class="admin-filters">
                     <input type="text" name="logs_q" placeholder="Buscar por ID, actor, accion o detalle" value="{{ logs_q }}" />
-                    <input type="text" name="logs_action" placeholder="Filtrar accion (ej: grant_admin)" value="{{ logs_action }}" />
+                    <input type="text" name="logs_actor" placeholder="Filtrar actor (correo o nombre)" value="{{ logs_actor }}" />
+                    <select name="logs_action">
+                        <option value="">Todas las acciones</option>
+                        {% for action_code in logs_action_options %}
+                        <option value="{{ action_code }}" {% if logs_action == action_code %}selected{% endif %}>{{ action_code }}</option>
+                        {% endfor %}
+                    </select>
+                    <input type="date" name="logs_date_from" value="{{ logs_date_from }}" />
+                    <input type="date" name="logs_date_to" value="{{ logs_date_to }}" />
                     <select name="per_logs">
                         {% for n in per_options %}
                         <option value="{{ n }}" {% if per_logs == n %}selected{% endif %}>{{ n }} por pagina</option>
@@ -184,8 +320,9 @@
                     <input type="hidden" name="admins_role" value="{{ admins_role }}" />
                     <input type="hidden" name="admins_state" value="{{ admins_state }}" />
                     <input type="hidden" name="per_admins" value="{{ per_admins }}" />
+                    <input type="hidden" name="tab" value="auditoria" />
                     <button type="submit" class="admin-btn"><i class="fas fa-search"></i> Filtrar</button>
-                    <a href="{{ url_for('admin_admins_page') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
+                    <a href="{{ url_for('admin_admins_page', tab='auditoria') }}" class="admin-btn"><i class="fas fa-eraser"></i> Limpiar</a>
                 </form>
 
                 <div style="display:flex; gap:8px; margin-bottom:10px;">
@@ -194,41 +331,43 @@
                     </a>
                 </div>
 
-                <div class="admin-table-wrap">
-                    <table class="admin-table">
-                        <thead>
-                            <tr>
-                                <th>Fecha</th>
-                                <th>Accion</th>
-                                <th>Actor</th>
-                                <th>Detalle</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for log_row, actor_user in recent_admin_logs %}
-                            <tr>
-                                <td>{{ log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else '-' }}</td>
-                                <td>{{ log_row.action }}</td>
-                                <td>{{ actor_user.email if actor_user else '-' }}</td>
-                                <td>
+                <div class="admin-audit-timeline">
+                    {% if logs_timeline %}
+                        {% for item in logs_timeline %}
+                        <article class="admin-audit-item admin-audit-item--{{ item.tone }}">
+                            <span class="admin-audit-icon"><i class="fas {{ item.icon }}"></i></span>
+                            <div class="admin-audit-content">
+                                <div class="admin-audit-head">
+                                    <strong>{{ item.title }}</strong>
+                                    <span>{{ item.when }}</span>
+                                </div>
+                                <p>
+                                    <b>Accion:</b> {{ item.log_row.action or '-' }} |
+                                    <b>Actor:</b> {{ item.actor_user.email if item.actor_user else '-' }} |
+                                    <b>Fecha:</b> {{ item.log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.log_row.created_at else '-' }}
+                                </p>
+                                <small>{{ item.log_row.detail or '-' }}</small>
                                     <button
                                         type="button"
                                         class="admin-btn"
-                                        data-id="{{ log_row.id }}"
-                                        data-date="{{ log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else '-' }}"
-                                        data-actor="{{ actor_user.email if actor_user else '-' }}"
-                                        data-action="{{ log_row.action or '-' }}"
-                                        data-detail="{{ log_row.detail or '-' }}"
-                                        data-ip="{{ log_row.ip or '-' }}"
+                                        data-id="{{ item.log_row.id }}"
+                                        data-date="{{ item.log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.log_row.created_at else '-' }}"
+                                        data-actor="{{ item.actor_user.email if item.actor_user else '-' }}"
+                                        data-action="{{ item.log_row.action or '-' }}"
+                                        data-action-title="{{ item.title }}"
+                                        data-tone="{{ item.tone }}"
+                                        data-detail="{{ item.log_row.detail or '-' }}"
+                                        data-ip="{{ item.log_row.ip or '-' }}"
                                         onclick="openAuditDetail(this)"
                                     >
-                                        <i class="fas fa-eye"></i> Ver detalle
-                                    </button>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                                    <i class="fas fa-eye"></i> Ver detalle
+                                </button>
+                            </div>
+                        </article>
+                        {% endfor %}
+                    {% else %}
+                    <p class="admin-chart-note">No hay eventos de auditoria para el filtro actual.</p>
+                    {% endif %}
                 </div>
 
                 <div class="admin-pagination-wrap">
@@ -249,93 +388,447 @@
                         {% endif %}
                     </div>
                 </div>
-            </article>
+            </section>
         </section>
     </div>
 
     <div id="adminRoleModal" class="admin-modal">
-        <div class="admin-modal-content">
+        <div class="admin-modal-content admin-modal-content--wide">
             <div class="admin-modal-header">
                 <h3>Detalle del administrador</h3>
                 <button type="button" class="admin-btn" onclick="closeAdminModal('adminRoleModal')">Cerrar</button>
             </div>
             <div class="admin-modal-body">
-                <p><strong>Usuario:</strong> <span id="adminRoleName">-</span></p>
-                <p><strong>Correo:</strong> <span id="adminRoleEmail">-</span></p>
-                <p><strong>Rol:</strong> <span id="adminRoleRole">-</span></p>
-                <p><strong>Permisos:</strong> <span id="adminRolePermissions">-</span></p>
-                <p><strong>Estado:</strong> <span id="adminRoleState">-</span></p>
-                <p><strong>Asignado:</strong> <span id="adminRoleCreated">-</span></p>
-                <form id="adminRoleRevokeForm" method="POST" action="" class="admin-modal-actions" style="display:none;">
-                    <button type="submit" class="admin-btn danger"><i class="fas fa-user-times"></i> Revocar acceso admin</button>
-                </form>
+                <div class="admin-user-summary">
+                    <div id="adminRoleAvatar" class="admin-user-avatar">-</div>
+                    <div>
+                        <h4 id="adminRoleName">-</h4>
+                        <p id="adminRoleEmail">-</p>
+                    </div>
+                    <span id="adminRoleBadge" class="admin-role-badge admin">Admin</span>
+                </div>
+                <div class="admin-user-detail-grid">
+                    <div class="admin-user-detail-card">
+                        <span>Estado</span>
+                        <strong id="adminRoleState">-</strong>
+                    </div>
+                    <div class="admin-user-detail-card">
+                        <span>Asignado</span>
+                        <strong id="adminRoleCreated">-</strong>
+                    </div>
+                    <div class="admin-user-detail-card">
+                        <span>Última actividad</span>
+                        <strong id="adminRoleLastActivity">-</strong>
+                    </div>
+                </div>
+                <div class="admin-perm-preview">
+                    <p>Permisos efectivos</p>
+                    <div id="adminRolePermissionsChips" class="admin-perm-preview-list"></div>
+                </div>
+                <p id="adminRoleProtectedNote" class="admin-chart-note" style="display:none;">
+                    Esta cuenta esta protegida (Super Admin). No se permite revocar desde esta vista.
+                </p>
+                <div class="admin-modal-actions">
+                    <form id="adminRoleRevokeForm" method="POST" action="" style="display:none;">
+                        <button type="submit" class="admin-btn danger"><i class="fas fa-user-times"></i> Revocar acceso admin</button>
+                    </form>
+                </div>
             </div>
         </div>
     </div>
 
     <div id="auditDetailModal" class="admin-modal">
-        <div class="admin-modal-content">
+        <div class="admin-modal-content admin-modal-content--wide">
             <div class="admin-modal-header">
                 <h3>Detalle de auditoria</h3>
                 <button type="button" class="admin-btn" onclick="closeAdminModal('auditDetailModal')">Cerrar</button>
             </div>
             <div class="admin-modal-body">
-                <p><strong>ID:</strong> <span id="auditId">-</span></p>
-                <p><strong>Fecha:</strong> <span id="auditDate">-</span></p>
-                <p><strong>Actor:</strong> <span id="auditActor">-</span></p>
-                <p><strong>Accion:</strong> <span id="auditAction">-</span></p>
-                <p><strong>IP:</strong> <span id="auditIp">-</span></p>
-                <p><strong>Detalle:</strong></p>
-                <pre id="auditDetailText" class="admin-code-block">-</pre>
+                <div class="admin-user-summary">
+                    <div class="admin-user-avatar"><i class="fas fa-clipboard-list"></i></div>
+                    <div>
+                        <h4 id="auditActionTitle">Evento administrativo</h4>
+                        <p id="auditDate">-</p>
+                    </div>
+                    <span id="auditActionBadge" class="admin-role-badge admin">Normal</span>
+                </div>
+                <div class="admin-user-detail-grid">
+                    <div class="admin-user-detail-card">
+                        <span>ID</span>
+                        <strong id="auditId">-</strong>
+                    </div>
+                    <div class="admin-user-detail-card">
+                        <span>Actor</span>
+                        <strong id="auditActor">-</strong>
+                    </div>
+                    <div class="admin-user-detail-card">
+                        <span>IP</span>
+                        <strong id="auditIp">-</strong>
+                    </div>
+                </div>
+                <div class="admin-perm-preview">
+                    <p>Acción</p>
+                    <div id="auditActionText" class="admin-perm-preview-list"></div>
+                </div>
+                <div class="admin-perm-preview">
+                    <p>Detalle estructurado</p>
+                    <div id="auditDetailStructured" class="admin-audit-detail-grid"></div>
+                    <pre id="auditDetailText" class="admin-code-block">-</pre>
+                </div>
             </div>
         </div>
     </div>
 
+    <div id="adminConfirmModal" class="admin-modal">
+        <div class="admin-modal-content">
+            <div class="admin-modal-header">
+                <h3 id="adminConfirmTitle">Confirmar acción</h3>
+                <button type="button" class="admin-btn" onclick="closeAdminModal('adminConfirmModal')">Cerrar</button>
+            </div>
+            <div class="admin-modal-body">
+                <div class="admin-delete-warning">
+                    <i class="fas fa-triangle-exclamation"></i>
+                    <div>
+                        <strong id="adminConfirmMessage">¿Deseas continuar?</strong>
+                        <p>Esta acción cambia los permisos del usuario seleccionado.</p>
+                    </div>
+                </div>
+                <label class="admin-check-confirm">
+                    <input id="adminConfirmCheck" type="checkbox" />
+                    <span>Confirmo que deseo continuar con esta acción.</span>
+                </label>
+                <div class="admin-modal-actions">
+                    <button type="button" class="admin-btn" onclick="closeAdminModal('adminConfirmModal')">Cancelar</button>
+                    <button id="adminConfirmAcceptBtn" type="button" class="admin-btn danger" disabled>
+                        <i class="fas fa-check"></i> Confirmar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="adminToastHost" class="admin-toast-host"></div>
+
+    <script id="adminTabsConfig" type="application/json">{{ {'initialTab': request.args.get('tab', 'resumen')} | tojson }}</script>
+    <script id="adminPermissionLabelsJson" type="application/json">{{ permission_labels_es | tojson }}</script>
+    <script id="adminDefaultPermissionsJson" type="application/json">{{ default_permissions | tojson }}</script>
+    <script id="adminAllPermissionsJson" type="application/json">{{ all_permissions | tojson }}</script>
+
     <script>
+        function readAdminJson(id, fallback) {
+            const el = document.getElementById(id);
+            if (!el) return fallback;
+            try {
+                return JSON.parse(el.textContent || '');
+            } catch (_err) {
+                return fallback;
+            }
+        }
+
+        function switchAdminTab(tabId, syncUrl = true) {
+            const tabs = document.querySelectorAll('.admin-tab-btn');
+            const panels = document.querySelectorAll('.admin-tab-panel');
+            tabs.forEach(btn => btn.classList.toggle('is-active', btn.dataset.tab === tabId));
+            panels.forEach(panel => panel.classList.toggle('is-active', panel.dataset.tabPanel === tabId));
+
+            if (syncUrl) {
+                const url = new URL(window.location.href);
+                url.searchParams.set('tab', tabId);
+                window.history.replaceState({}, '', url.toString());
+            }
+        }
+
+        function initAdminTabs() {
+            const tabsConfig = readAdminJson('adminTabsConfig', { initialTab: 'resumen' });
+            const initialTab = (tabsConfig && typeof tabsConfig.initialTab === 'string') ? tabsConfig.initialTab : 'resumen';
+            const validTabs = new Set(['resumen', 'asignar', 'admins', 'auditoria']);
+            const tab = validTabs.has(initialTab) ? initialTab : 'resumen';
+            switchAdminTab(tab, false);
+
+            document.querySelectorAll('.admin-tab-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    switchAdminTab(btn.dataset.tab);
+                });
+            });
+        }
+
+        const ADMIN_PERMISSION_LABELS = readAdminJson('adminPermissionLabelsJson', {});
+        const adminDefaultPermissions = readAdminJson('adminDefaultPermissionsJson', []);
+        const adminAllPermissions = readAdminJson('adminAllPermissionsJson', []);
+        const ADMIN_PERMISSION_PRESETS = {
+            base: adminDefaultPermissions,
+            soporte: ["view_dashboard", "view_users", "view_conversations", "view_logs", "manage_users"],
+            auditor: ["view_dashboard", "view_users", "view_logs", "view_security", "export_reports"],
+            all: adminAllPermissions
+        };
+
+        function updateAdminPermPreview() {
+            const checks = Array.from(document.querySelectorAll('.admin-perm-check'));
+            const selected = checks.filter(ch => ch.checked).map(ch => ch.value);
+            const list = document.getElementById('adminPermPreviewList');
+            if (!list) return;
+            if (!selected.length) {
+                list.innerHTML = '<span class="admin-perm-preview-empty">Sin permisos seleccionados (se aplicaran los permisos base).</span>';
+                return;
+            }
+            list.innerHTML = selected.map(code => {
+                const label = ADMIN_PERMISSION_LABELS[code] || code;
+                return '<span class="admin-perm-chip">' + label + '</span>';
+            }).join('');
+        }
+
+        function applyAdminPreset(btn) {
+            const presetKey = (btn && btn.dataset) ? (btn.dataset.preset || '') : '';
+            const preset = ADMIN_PERMISSION_PRESETS[presetKey] || [];
+            const checks = Array.from(document.querySelectorAll('.admin-perm-check'));
+            const selected = new Set(preset);
+            checks.forEach(ch => {
+                ch.checked = selected.has(ch.value);
+            });
+            updateAdminPermPreview();
+        }
+
+        function clearAdminPreset() {
+            document.querySelectorAll('.admin-perm-check').forEach(ch => {
+                ch.checked = false;
+            });
+            updateAdminPermPreview();
+        }
+
+        function escapeHtml(value) {
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function applyModalBodyState() {
+            const anyOpen = document.querySelector('.admin-modal.show');
+            document.body.classList.toggle('admin-modal-open', Boolean(anyOpen));
+        }
+
         function openAdminModal(id){
             const el = document.getElementById(id);
-            if (el) el.classList.add('show');
+            if (el) {
+                el.classList.add('show');
+                applyModalBodyState();
+            }
         }
         function closeAdminModal(id){
             const el = document.getElementById(id);
-            if (el) el.classList.remove('show');
+            if (el) {
+                el.classList.remove('show');
+                applyModalBodyState();
+            }
         }
+
+        function renderPermissionChips(rawPermissions) {
+            const host = document.getElementById('adminRolePermissionsChips');
+            if (!host) return;
+            const parts = String(rawPermissions || '')
+                .split(',')
+                .map(v => v.trim())
+                .filter(Boolean);
+            if (!parts.length) {
+                host.innerHTML = '<span class="admin-perm-preview-empty">Sin permisos.</span>';
+                return;
+            }
+            host.innerHTML = parts.map(p => '<span class="admin-perm-chip">' + escapeHtml(p) + '</span>').join('');
+        }
+
         function openAdminRoleDetail(btn){
+            const role = btn.dataset.role || '-';
+            const name = btn.dataset.name || '-';
+            const state = btn.dataset.state || '-';
             document.getElementById('adminRoleName').textContent = btn.dataset.name || '-';
             document.getElementById('adminRoleEmail').textContent = btn.dataset.email || '-';
-            document.getElementById('adminRoleRole').textContent = btn.dataset.role || '-';
-            document.getElementById('adminRolePermissions').textContent = btn.dataset.permissions || '-';
-            document.getElementById('adminRoleState').textContent = btn.dataset.state || '-';
+            document.getElementById('adminRoleState').innerHTML = (state === 'Activo')
+                ? '<span class="status-pill ok">Activo</span>'
+                : '<span class="status-pill off">Inactivo</span>';
             document.getElementById('adminRoleCreated').textContent = btn.dataset.created || '-';
+            document.getElementById('adminRoleLastActivity').textContent = btn.dataset.lastActivity || '-';
+            const avatar = document.getElementById('adminRoleAvatar');
+            if (avatar) {
+                avatar.textContent = (name || 'U').trim().slice(0, 1).toUpperCase();
+            }
+            const roleBadge = document.getElementById('adminRoleBadge');
+            if (roleBadge) {
+                roleBadge.textContent = role;
+                roleBadge.className = 'admin-role-badge ' + (role === 'Super Admin' ? 'super' : 'admin');
+            }
+            renderPermissionChips(btn.dataset.permissions || '');
             const form = document.getElementById('adminRoleRevokeForm');
+            const protectedNote = document.getElementById('adminRoleProtectedNote');
             if (btn.dataset.canRevoke === '1') {
                 form.action = btn.dataset.revokeUrl || '';
+                form.dataset.targetName = btn.dataset.name || 'este administrador';
                 form.style.display = 'block';
+                if (protectedNote) {
+                    protectedNote.style.display = 'none';
+                }
             } else {
                 form.action = '';
+                form.dataset.targetName = '';
                 form.style.display = 'none';
+                if (protectedNote) {
+                    protectedNote.style.display = (btn.dataset.protected === '1') ? 'block' : 'none';
+                }
             }
             openAdminModal('adminRoleModal');
         }
+
+        function parseAuditDetail(detail) {
+            const raw = String(detail || '').trim();
+            if (!raw || raw === '-') {
+                return [];
+            }
+            return raw
+                .split(';')
+                .map(part => part.trim())
+                .filter(Boolean)
+                .map(part => {
+                    const idx = part.indexOf('=');
+                    if (idx === -1) {
+                        return { key: 'Dato', value: part };
+                    }
+                    return {
+                        key: part.slice(0, idx).trim(),
+                        value: part.slice(idx + 1).trim(),
+                    };
+                });
+        }
+
+        function renderAuditStructured(detail) {
+            const host = document.getElementById('auditDetailStructured');
+            if (!host) return;
+            const parsed = parseAuditDetail(detail);
+            if (!parsed.length) {
+                host.innerHTML = '<span class="admin-perm-preview-empty">No hay detalle estructurado.</span>';
+                return;
+            }
+            host.innerHTML = parsed.map(item => {
+                return '<article class="admin-audit-detail-card"><span>' + escapeHtml(item.key) + '</span><strong>' + escapeHtml(item.value) + '</strong></article>';
+            }).join('');
+        }
+
         function openAuditDetail(btn){
             document.getElementById('auditId').textContent = btn.dataset.id || '-';
             document.getElementById('auditDate').textContent = btn.dataset.date || '-';
             document.getElementById('auditActor').textContent = btn.dataset.actor || '-';
-            document.getElementById('auditAction').textContent = btn.dataset.action || '-';
             document.getElementById('auditIp').textContent = btn.dataset.ip || '-';
+            document.getElementById('auditActionTitle').textContent = btn.dataset.actionTitle || 'Evento administrativo';
+            const actionText = document.getElementById('auditActionText');
+            if (actionText) {
+                actionText.innerHTML = '<span class="admin-perm-chip">' + escapeHtml(btn.dataset.action || '-') + '</span>';
+            }
+            const actionBadge = document.getElementById('auditActionBadge');
+            if (actionBadge) {
+                const tone = btn.dataset.tone || 'ok';
+                actionBadge.textContent = tone === 'off' ? 'Critico' : (tone === 'warn' ? 'Advertencia' : 'Normal');
+                actionBadge.className = 'admin-role-badge ' + (tone === 'off' ? 'super' : (tone === 'warn' ? 'admin' : 'admin'));
+            }
             document.getElementById('auditDetailText').textContent = btn.dataset.detail || '-';
+            renderAuditStructured(btn.dataset.detail || '-');
             openAdminModal('auditDetailModal');
         }
+
+        function showAdminToast(message, type) {
+            const host = document.getElementById('adminToastHost');
+            if (!host || !message) return;
+            const toast = document.createElement('article');
+            toast.className = 'admin-toast admin-toast--' + (type || 'success');
+            toast.textContent = message;
+            host.appendChild(toast);
+            requestAnimationFrame(() => toast.classList.add('show'));
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 260);
+            }, 2600);
+        }
+
+        function mountFlashToasts() {
+            const flashes = document.querySelectorAll('.admin-flashes .admin-flash');
+            flashes.forEach(flash => {
+                const text = flash.textContent ? flash.textContent.trim() : '';
+                const cls = flash.className || '';
+                const type = cls.includes('error') || cls.includes('danger')
+                    ? 'error'
+                    : (cls.includes('warning') ? 'warn' : 'success');
+                showAdminToast(text, type);
+            });
+            const flashWrap = document.querySelector('.admin-flashes');
+            if (flashWrap && flashes.length) {
+                flashWrap.style.display = 'none';
+            }
+        }
+
+        let adminConfirmAction = null;
+        function openActionConfirm(title, message, onConfirm) {
+            const titleEl = document.getElementById('adminConfirmTitle');
+            const messageEl = document.getElementById('adminConfirmMessage');
+            const checkEl = document.getElementById('adminConfirmCheck');
+            const acceptBtn = document.getElementById('adminConfirmAcceptBtn');
+            if (titleEl) titleEl.textContent = title;
+            if (messageEl) messageEl.textContent = message;
+            if (checkEl) checkEl.checked = false;
+            if (acceptBtn) acceptBtn.disabled = true;
+            adminConfirmAction = onConfirm || null;
+            openAdminModal('adminConfirmModal');
+        }
+
         document.addEventListener('click', function(e){
             if (e.target.classList.contains('admin-modal')) {
                 e.target.classList.remove('show');
+                applyModalBodyState();
             }
         });
         document.addEventListener('keydown', function(e){
             if (e.key === 'Escape') {
                 document.querySelectorAll('.admin-modal.show').forEach(m => m.classList.remove('show'));
+                applyModalBodyState();
             }
         });
+        const adminRoleRevokeForm = document.getElementById('adminRoleRevokeForm');
+        if (adminRoleRevokeForm) {
+            adminRoleRevokeForm.addEventListener('submit', function(e) {
+                if (adminRoleRevokeForm.dataset.confirmed === '1') {
+                    adminRoleRevokeForm.dataset.confirmed = '';
+                    return;
+                }
+                const target = adminRoleRevokeForm.dataset.targetName || 'este administrador';
+                e.preventDefault();
+                openActionConfirm(
+                    'Confirmar revocacion',
+                    'Vas a revocar permisos admin de ' + target + '. Esta accion afecta el acceso al panel.',
+                    function() {
+                        adminRoleRevokeForm.dataset.confirmed = '1';
+                        adminRoleRevokeForm.submit();
+                    }
+                );
+            });
+        }
+        const adminConfirmCheck = document.getElementById('adminConfirmCheck');
+        const adminConfirmAcceptBtn = document.getElementById('adminConfirmAcceptBtn');
+        if (adminConfirmCheck && adminConfirmAcceptBtn) {
+            adminConfirmCheck.addEventListener('change', function() {
+                adminConfirmAcceptBtn.disabled = !adminConfirmCheck.checked;
+            });
+            adminConfirmAcceptBtn.addEventListener('click', function() {
+                if (adminConfirmCheck.checked && typeof adminConfirmAction === 'function') {
+                    closeAdminModal('adminConfirmModal');
+                    adminConfirmAction();
+                    adminConfirmAction = null;
+                }
+            });
+        }
+        document.querySelectorAll('.admin-perm-check').forEach(ch => {
+            ch.addEventListener('change', updateAdminPermPreview);
+        });
+        initAdminTabs();
+        updateAdminPermPreview();
+        mountFlashToasts();
     </script>
 </body>
 </html>

@@ -1,16 +1,18 @@
 import os
+import csv
 import random
 import re
 import json
 from datetime import datetime, timedelta, timezone  # ✅ Cambio 1: Añadido timezone
-from io import BytesIO
+from io import BytesIO, StringIO
 import requests
 import logging
 import time
 import uuid
+from collections import Counter
 from functools import wraps
 import math
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session, abort, Response
 from dotenv import load_dotenv
@@ -99,6 +101,11 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
+APP_STARTED_AT = datetime.now(timezone.utc).replace(tzinfo=None)
+ADMIN_LOG_RETENTION_DAYS = max(30, int((os.getenv("ADMIN_LOG_RETENTION_DAYS") or "180").strip()))
+ADMIN_LOG_CLEANUP_INTERVAL_S = max(600, int((os.getenv("ADMIN_LOG_CLEANUP_INTERVAL_S") or "21600").strip()))
+_ADMIN_LOG_CLEANUP_LAST_TS = 0.0
+
 # ==========================
 # 🔐 Seguridad base (Fase 0)
 # ==========================
@@ -144,6 +151,29 @@ PERMISSION_LABELS_ES = {
     "manage_admins": "Gestionar administradores",
     "manage_settings": "Gestionar configuracion",
 }
+
+PERMISSION_GROUPS_ES = [
+    {
+        "title": "Panel y reportes",
+        "icon": "fa-chart-line",
+        "codes": ["view_dashboard", "export_reports"],
+    },
+    {
+        "title": "Usuarios y conversaciones",
+        "icon": "fa-users",
+        "codes": ["view_users", "view_conversations", "manage_users"],
+    },
+    {
+        "title": "Seguridad y registros",
+        "icon": "fa-shield-halved",
+        "codes": ["view_security", "view_logs"],
+    },
+    {
+        "title": "Administracion",
+        "icon": "fa-user-shield",
+        "codes": ["manage_admins", "manage_settings"],
+    },
+]
 
 # Secret key desde entorno (MUY IMPORTANTE en producción)
 app.secret_key = (os.getenv("SECRET_KEY") or "dev_secret_key_change_me").strip()
@@ -289,6 +319,7 @@ def get_client_ip():
 def _before_request_logging():
     request._start_time = time.time()
     request._rid = uuid.uuid4().hex[:12]
+    _cleanup_old_admin_logs(force=False)
 
 
 @app.before_request
@@ -305,10 +336,24 @@ def _before_request_enforce_active_account():
     suspension_until = _active_suspension_until(current_user)
 
     if bool(getattr(current_user, "is_active_account", True)) and not suspension_until:
+        # Cierre forzado de sesion si un admin lo marco desde panel de seguridad.
+        ctl = UserSessionControl.query.filter_by(user_id=user_id).first() if user_id else None
+        force_after = to_naive_utc(getattr(ctl, "force_logout_after", None))
+        if force_after:
+            login_at_ts = int(session.get("login_at_ts") or 0)
+            force_ts = int(force_after.replace(tzinfo=timezone.utc).timestamp())
+            if login_at_ts <= 0 or login_at_ts < force_ts:
+                logout_user()
+                for key in ["_user_id", "_fresh", "_id", "remember_token", "login_at_ts"]:
+                    session.pop(key, None)
+                _set_login_help_mode("support", email_hint=email_hint)
+                flash("Tu sesion fue cerrada por seguridad. Inicia sesion nuevamente.", "error")
+                log_event("FORCE_LOGOUT_SECURITY", user_id=user_id, email=email_hint, path=request.path)
+                return redirect(url_for('login_page'))
         return None
 
     logout_user()
-    for key in ["_user_id", "_fresh", "_id", "remember_token"]:
+    for key in ["_user_id", "_fresh", "_id", "remember_token", "login_at_ts"]:
         session.pop(key, None)
 
     if suspension_until:
@@ -568,8 +613,73 @@ class RateLimit(db.Model):
     blocked_until = db.Column(db.DateTime, nullable=True)
 
 
+class SecurityBlock(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    block_type = db.Column(db.String(20), nullable=False, index=True)  # email | ip
+    target = db.Column(db.String(190), nullable=False, index=True)
+    reason = db.Column(db.String(255), nullable=True)
+    blocked_until = db.Column(db.DateTime, nullable=False, index=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow_naive, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
+
+
+class UserSessionControl(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False, index=True)
+    force_logout_after = db.Column(db.DateTime, nullable=True, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
+
+
 def _normalize_email(value: str) -> str:
     return (value or "").strip().lower()
+
+
+def _normalize_ip(value: str) -> str:
+    return (value or "").strip()
+
+
+def _active_security_block(block_type: str, target: str, now_utc=None):
+    now_utc = now_utc or utcnow_naive()
+    clean_type = (block_type or "").strip().lower()
+    clean_target = _normalize_email(target) if clean_type == "email" else _normalize_ip(target)
+    if clean_type not in {"email", "ip"} or not clean_target:
+        return None
+    return (
+        SecurityBlock.query.filter_by(
+            block_type=clean_type,
+            target=clean_target,
+            is_active=True,
+        )
+        .filter(SecurityBlock.blocked_until > now_utc)
+        .order_by(SecurityBlock.blocked_until.desc())
+        .first()
+    )
+
+
+def _security_block_wait_seconds(block_row, now_utc=None) -> int:
+    now_utc = now_utc or utcnow_naive()
+    if not block_row or not block_row.blocked_until:
+        return 0
+    until = to_naive_utc(block_row.blocked_until)
+    if not until or until <= now_utc:
+        return 0
+    return max(1, int((until - now_utc).total_seconds()))
+
+
+def _mark_force_logout(user_id: int):
+    if not user_id:
+        return
+    row = UserSessionControl.query.filter_by(user_id=user_id).first()
+    now_utc = utcnow_naive()
+    if not row:
+        row = UserSessionControl(user_id=user_id, force_logout_after=now_utc)
+        db.session.add(row)
+    else:
+        row.force_logout_after = now_utc
+        row.updated_at = now_utc
+    db.session.commit()
 
 
 def _loads_permissions(raw: str):
@@ -681,17 +791,59 @@ def _bootstrap_super_admin_roles():
 
 def _add_admin_audit(action: str, target_user_id=None, detail=None):
     try:
+        detail_parts = []
+        if detail:
+            detail_parts.append(str(detail).strip())
+        if request:
+            rid = getattr(request, "_rid", "") or ""
+            meta = []
+            if rid:
+                meta.append(f"rid={rid}")
+            if request.method:
+                meta.append(f"method={request.method}")
+            if request.path:
+                meta.append(f"path={request.path}")
+            if request.endpoint:
+                meta.append(f"endpoint={request.endpoint}")
+            if meta:
+                detail_parts.append("; ".join(meta))
         row = AdminAuditLog(
             actor_user_id=current_user.id if current_user.is_authenticated else None,
             action=action,
             target_user_id=target_user_id,
-            detail=(detail or "")[:2000],
+            detail=("; ".join([p for p in detail_parts if p]))[:2000],
             ip=get_client_ip() if request else None,
         )
         db.session.add(row)
         db.session.commit()
     except Exception:
         db.session.rollback()
+
+
+def _cleanup_old_admin_logs(force=False):
+    global _ADMIN_LOG_CLEANUP_LAST_TS
+    now_ts = time.time()
+    if not force and (now_ts - _ADMIN_LOG_CLEANUP_LAST_TS) < ADMIN_LOG_CLEANUP_INTERVAL_S:
+        return 0
+    cutoff = utcnow_naive() - timedelta(days=ADMIN_LOG_RETENTION_DAYS)
+    try:
+        deleted = (
+            AdminAuditLog.query
+            .filter(AdminAuditLog.created_at < cutoff)
+            .delete(synchronize_session=False)
+        )
+        db.session.commit()
+        _ADMIN_LOG_CLEANUP_LAST_TS = now_ts
+        if deleted:
+            log_event(
+                "ADMIN_LOG_CLEANUP",
+                deleted=deleted,
+                retention_days=ADMIN_LOG_RETENTION_DAYS,
+            )
+        return int(deleted or 0)
+    except Exception:
+        db.session.rollback()
+        return 0
 
 
 def admin_required(permission=None, super_only=False):
@@ -1226,6 +1378,11 @@ def register_reset_sent(email: str):
 
 def can_send_reset_ip(ip: str):
     now = utcnow_naive()  # ✅ Cambiado a naive UTC
+    manual_ip_block = _active_security_block("ip", ip, now)
+    if manual_ip_block:
+        wait = _security_block_wait_seconds(manual_ip_block, now)
+        return False, wait, True
+
     row = ResetIPRequest.query.filter_by(ip=ip).first()
     if not row:
         row = ResetIPRequest(ip=ip)
@@ -1273,6 +1430,15 @@ def register_reset_ip_sent(ip: str):
 
 def can_login(ip: str, email: str):
     now = utcnow_naive()  # ✅ Cambiado a naive UTC
+    manual_email_block = _active_security_block("email", email, now)
+    manual_ip_block = _active_security_block("ip", ip, now)
+    if manual_email_block or manual_ip_block:
+        wait = max(
+            _security_block_wait_seconds(manual_email_block, now),
+            _security_block_wait_seconds(manual_ip_block, now),
+        )
+        return False, wait
+
     row = LoginAttempt.query.filter_by(ip=ip, email=email).first()
     if not row:
         row = LoginAttempt(ip=ip, email=email)
@@ -1472,14 +1638,21 @@ def login_page():
 
         ok_login, wait_login = can_login(ip, email)
         if not ok_login:
-            log_event("LOGIN_BLOCKED", email=email, ip=ip, wait_s=wait_login)
-            flash(f"Demasiados intentos. Espera {wait_login} segundos o usa recuperacion de contrasena.", "error")
-            _set_login_help_mode("forgot")
+            manual_email_block = _active_security_block("email", email)
+            manual_ip_block = _active_security_block("ip", ip)
+            if manual_email_block or manual_ip_block:
+                log_event("LOGIN_BLOCKED", email=email, ip=ip, reason="manual_security_block", wait_s=wait_login)
+                flash(f"Acceso bloqueado por seguridad. Espera {wait_login} segundos o contacta soporte.", "error")
+                _set_login_help_mode("support", email_hint=email)
+            else:
+                log_event("LOGIN_BLOCKED", email=email, ip=ip, wait_s=wait_login)
+                flash(f"Demasiados intentos. Espera {wait_login} segundos o usa recuperacion de contrasena.", "error")
+                _set_login_help_mode("forgot")
             return render_template(
                 'login.html',
-                show_forgot=True,
-                show_inactive_support=False,
-                support_whatsapp_link="",
+                show_forgot=session.get("show_forgot", False),
+                show_inactive_support=session.get("show_inactive_support", False),
+                support_whatsapp_link=_build_support_whatsapp_link(),
             )
 
         user = User.query.filter_by(email=email).first()
@@ -1522,6 +1695,7 @@ def login_page():
             _set_login_help_mode("")
             clear_login_attempts(ip, email)
             login_user(user)
+            session["login_at_ts"] = int(time.time())
             _ensure_super_admin_membership(user)
             return redirect(url_for('home'))
 
@@ -1565,6 +1739,7 @@ def register():
     db.session.commit()
 
     login_user(new_user)
+    session["login_at_ts"] = int(time.time())
     _ensure_super_admin_membership(new_user)
     return redirect(url_for('home'))
 
@@ -1575,7 +1750,7 @@ def logout():
     logout_user()
     # Mantener datos de enlaces compartidos activos en esta sesión del navegador.
     # Solo limpiamos claves de autenticación principal.
-    for key in ["_user_id", "_fresh", "_id", "remember_token"]:
+    for key in ["_user_id", "_fresh", "_id", "remember_token", "login_at_ts"]:
         session.pop(key, None)
     return redirect(url_for('login_page'))
 
@@ -1784,6 +1959,128 @@ def _admin_dashboard_charts(days=7):
     }
 
 
+def _format_uptime_compact(start_dt, now_dt):
+    if not start_dt or not now_dt or now_dt < start_dt:
+        return "-"
+    total_seconds = int((now_dt - start_dt).total_seconds())
+    days, rem = divmod(total_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours or days:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes}m")
+    return " ".join(parts)
+
+
+def _admin_system_health():
+    now_utc = utcnow_naive()
+    items = []
+
+    # Base de datos + latencia simple de ping
+    db_status = "off"
+    db_label = "Error"
+    db_detail = "Sin respuesta"
+    try:
+        t0 = time.perf_counter()
+        db.session.execute(text("SELECT 1"))
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        if latency_ms <= 120:
+            db_status, db_label = "ok", "Conectada"
+        elif latency_ms <= 350:
+            db_status, db_label = "warn", "Lenta"
+        else:
+            db_status, db_label = "warn", "Latencia alta"
+        db_detail = f"Ping: {latency_ms} ms"
+    except Exception:
+        pass
+    items.append({
+        "name": "Base de datos",
+        "status": db_status,
+        "label": db_label,
+        "detail": db_detail,
+        "icon": "fa-database",
+    })
+
+    # Gemini
+    gemini_count = len([k for k in LISTA_DE_CLAVES if k])
+    if gemini_count >= 3:
+        gem_status, gem_label = "ok", "Lista"
+    elif gemini_count >= 1:
+        gem_status, gem_label = "warn", "Parcial"
+    else:
+        gem_status, gem_label = "off", "Sin claves"
+    items.append({
+        "name": "Gemini",
+        "status": gem_status,
+        "label": gem_label,
+        "detail": f"Claves cargadas: {gemini_count}",
+        "icon": "fa-robot",
+    })
+
+    # Correo
+    mode = (RESET_MODE or "dev").strip().lower()
+    if mode == "brevo_api":
+        mail_ok = bool(BREVO_API_KEY and BREVO_SENDER_EMAIL)
+        mail_status, mail_label = ("ok", "Brevo API") if mail_ok else ("off", "Brevo incompleto")
+    elif mode == "smtp":
+        mail_ok = bool(MAIL_SERVER and MAIL_USERNAME and MAIL_PASSWORD)
+        mail_status, mail_label = ("ok", "SMTP listo") if mail_ok else ("off", "SMTP incompleto")
+    else:
+        mail_ok = True
+        mail_status, mail_label = "warn", "Modo dev"
+    items.append({
+        "name": "Correo",
+        "status": mail_status,
+        "label": mail_label,
+        "detail": f"Modo: {mode}",
+        "icon": "fa-envelope",
+    })
+
+    # Cloudinary
+    cfg = cloudinary.config()
+    cloud_ok = bool(cfg and cfg.cloud_name and (cfg.api_key or CLOUDINARY_URL))
+    items.append({
+        "name": "Cloudinary",
+        "status": "ok" if cloud_ok else "off",
+        "label": "Listo" if cloud_ok else "No configurado",
+        "detail": f"Cloud: {cfg.cloud_name if cfg and cfg.cloud_name else '-'}",
+        "icon": "fa-cloud",
+    })
+
+    # Uptime del proceso actual
+    items.append({
+        "name": "Uptime",
+        "status": "ok",
+        "label": _format_uptime_compact(APP_STARTED_AT, now_utc),
+        "detail": f"Inicio: {_format_dt_human(APP_STARTED_AT)} UTC",
+        "icon": "fa-clock",
+    })
+
+    # Seguridad reciente (señales rápidas)
+    try:
+        high_risk = LoginAttempt.query.filter(LoginAttempt.attempts >= 5).count()
+    except Exception:
+        high_risk = 0
+    if high_risk >= 20:
+        sec_status, sec_label = "off", "Alta actividad"
+    elif high_risk >= 5:
+        sec_status, sec_label = "warn", "Moderada"
+    else:
+        sec_status, sec_label = "ok", "Normal"
+    items.append({
+        "name": "Seguridad reciente",
+        "status": sec_status,
+        "label": sec_label,
+        "detail": f"IPs con >=5 intentos: {high_risk}",
+        "icon": "fa-shield-halved",
+    })
+
+    return items
+
+
 def _admin_admins_data():
     admins_rows = (
         db.session.query(AdminRole, User)
@@ -1853,11 +2150,453 @@ def _admin_recent_logs(limit=30):
     )
 
 
+def _mask_email_for_logs(email: str):
+    email = (email or "").strip()
+    if "@" not in email:
+        return email
+    local, domain = email.split("@", 1)
+    if len(local) <= 2:
+        local_masked = local[:1] + "*"
+    else:
+        local_masked = local[:2] + ("*" * max(2, len(local) - 2))
+    domain_parts = domain.split(".")
+    if domain_parts and domain_parts[0]:
+        dom0 = domain_parts[0]
+        domain_parts[0] = dom0[:1] + ("*" * max(2, len(dom0) - 1))
+    return local_masked + "@" + ".".join(domain_parts)
+
+
+def _mask_sensitive_text(text: str):
+    raw = (text or "").strip()
+    if not raw:
+        return "-"
+    # Claves/tokens/passwords declarados en pares key=value
+    masked = re.sub(
+        r"(?i)\b(api[_-]?key|token|secret|password|authorization)\s*=\s*([^;,\s]+)",
+        r"\1=***",
+        raw,
+    )
+    # Bearer tokens
+    masked = re.sub(r"(?i)\bBearer\s+[A-Za-z0-9\-._~+/]+=*", "Bearer ***", masked)
+    # Gemini/Google API keys tipo AIza...
+    masked = re.sub(r"AIza[0-9A-Za-z\-_]{20,}", "AIza***", masked)
+    # Enmascarar correos
+    masked = re.sub(
+        r"([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})",
+        lambda m: _mask_email_for_logs(m.group(0)),
+        masked,
+    )
+    return masked
+
+
+def _extract_detail_pairs(detail: str):
+    raw = (detail or "").strip()
+    if not raw:
+        return []
+    chunks = [c.strip() for c in raw.split(";") if c.strip()]
+    out = []
+    for ch in chunks:
+        if "=" not in ch:
+            out.append(("detalle", _mask_sensitive_text(ch)))
+            continue
+        k, v = ch.split("=", 1)
+        out.append((k.strip().lower(), _mask_sensitive_text(v.strip())))
+    return out
+
+
+def _extract_request_id(detail: str):
+    raw = (detail or "").strip()
+    if not raw:
+        return ""
+    m = re.search(r"(?:^|[;\s,])rid=([A-Za-z0-9_-]{6,64})", raw)
+    return m.group(1) if m else ""
+
+
+def _extract_meta_from_detail(detail: str):
+    pairs = dict(_extract_detail_pairs(detail))
+    return {
+        "rid": pairs.get("rid", ""),
+        "method": pairs.get("method", ""),
+        "path": pairs.get("path", ""),
+        "endpoint": pairs.get("endpoint", ""),
+    }
+
+
+def _admin_log_module(action: str):
+    key = (action or "").lower()
+    if key.startswith("security_"):
+        return "Seguridad", "admin_security_page"
+    if key.startswith("user_"):
+        return "Usuarios", "admin_users_page"
+    if key.startswith("admin_"):
+        return "Administradores", "admin_admins_page"
+    return "Logs", "admin_logs_page"
+
+
+def _admin_log_severity(action: str, detail: str = ""):
+    key = (action or "").lower()
+    d = (detail or "").lower()
+    critical_words = ("delete", "revoke", "force_logout", "block")
+    warn_words = ("suspend", "unlock", "clear", "status_change")
+    if any(w in key for w in critical_words):
+        return "critical", "Critico"
+    if any(w in key for w in warn_words):
+        return "warn", "Advertencia"
+    if "error" in d or "fail" in d:
+        return "warn", "Advertencia"
+    return "info", "Info"
+
+
+def _admin_filter_logs_rows(
+    rows,
+    q="",
+    action="",
+    actor="",
+    ip="",
+    target_user="",
+    event_id="",
+    request_id="",
+    severity="",
+    date_from=None,
+    date_to=None,
+):
+    q = (q or "").strip().lower()
+    action = (action or "").strip().lower()
+    actor = (actor or "").strip().lower()
+    ip = (ip or "").strip().lower()
+    target_user = (target_user or "").strip().lower()
+    event_id = (event_id or "").strip()
+    request_id = (request_id or "").strip().lower()
+    severity = (severity or "").strip().lower()
+
+    filtered = []
+    for log_row, actor_user in rows:
+        actor_email = ((actor_user.email if actor_user else "") or "").lower()
+        actor_name = ((actor_user.name if actor_user else "") or "").lower()
+        action_val = (log_row.action or "").lower()
+        detail_val = (log_row.detail or "").lower()
+        ip_val = (log_row.ip or "").lower()
+        rid_val = _extract_request_id(log_row.detail).lower()
+        sev_key, _sev_label = _admin_log_severity(log_row.action, log_row.detail)
+        created = to_naive_utc(log_row.created_at)
+
+        if q:
+            if not (
+                q in actor_email
+                or q in actor_name
+                or q in action_val
+                or q in detail_val
+                or q in ip_val
+                or q in str(log_row.id)
+                or q in str(log_row.target_user_id or "")
+                or q in rid_val
+            ):
+                continue
+        if action and action not in action_val:
+            continue
+        if actor and actor not in actor_email and actor not in actor_name:
+            continue
+        if ip and ip not in ip_val:
+            continue
+        if target_user and target_user not in str(log_row.target_user_id or ""):
+            continue
+        if event_id and event_id != str(log_row.id):
+            continue
+        if request_id and request_id != rid_val:
+            continue
+        if severity and severity != sev_key:
+            continue
+        if date_from and (not created or created < date_from):
+            continue
+        if date_to and (not created or created >= date_to):
+            continue
+        filtered.append((log_row, actor_user))
+
+    return filtered
+
+
+def _admin_enrich_logs_rows(rows, now_utc=None):
+    now_utc = now_utc or utcnow_naive()
+    target_ids = {int(r[0].target_user_id) for r in rows if r[0].target_user_id}
+    target_map = {}
+    if target_ids:
+        target_users = User.query.filter(User.id.in_(list(target_ids))).all()
+        target_map = {u.id: u for u in target_users}
+
+    enriched = []
+    for log_row, actor_user in rows:
+        title, icon, tone = _admin_action_meta(log_row.action)
+        severity_key, severity_label = _admin_log_severity(log_row.action, log_row.detail or "")
+        meta = _extract_meta_from_detail(log_row.detail or "")
+        rid_val = _extract_request_id(log_row.detail or "")
+        module_name, module_endpoint = _admin_log_module(log_row.action)
+        module_url = url_for(module_endpoint)
+        target_user = target_map.get(int(log_row.target_user_id or 0))
+        detail_masked = _mask_sensitive_text(log_row.detail or "-")
+        detail_pairs = _extract_detail_pairs(log_row.detail or "")
+
+        summary = detail_masked
+        if len(summary) > 150:
+            summary = summary[:147] + "..."
+
+        enriched.append({
+            "log_row": log_row,
+            "actor_user": actor_user,
+            "target_user": target_user,
+            "title": title,
+            "icon": icon,
+            "tone": tone,
+            "severity_key": severity_key,
+            "severity_label": severity_label,
+            "when": _time_ago_es(log_row.created_at, now_utc),
+            "summary": summary,
+            "detail_masked": detail_masked,
+            "detail_pairs": detail_pairs,
+            "request_id": rid_val,
+            "method": meta.get("method", ""),
+            "path": meta.get("path", ""),
+            "endpoint": meta.get("endpoint", ""),
+            "module_name": module_name,
+            "module_url": module_url,
+        })
+    return enriched
+
+
+def _admin_logs_filters_from_request():
+    filters = {
+        "q": (request.args.get("q") or "").strip().lower(),
+        "action": (request.args.get("action") or "").strip().lower(),
+        "actor": (request.args.get("actor") or "").strip().lower(),
+        "ip": (request.args.get("ip") or "").strip().lower(),
+        "target_user": (request.args.get("target_user") or "").strip().lower(),
+        "event_id": (request.args.get("event_id") or "").strip(),
+        "request_id": (request.args.get("request_id") or "").strip().lower(),
+        "severity": (request.args.get("severity") or "").strip().lower(),
+        "date_from": _parse_date_ymd(request.args.get("date_from")),
+        "date_to": _parse_date_ymd(request.args.get("date_to")),
+    }
+    if filters["date_to"]:
+        filters["date_to"] = filters["date_to"] + timedelta(days=1)
+    return filters
+
+
+def _admin_logs_for_export(limit=5000):
+    rows = _admin_recent_logs(limit=limit)
+    filters = _admin_logs_filters_from_request()
+    return _admin_filter_logs_rows(rows, **filters)
+
+
+def _time_ago_es(dt, now_dt=None):
+    dt_n = to_naive_utc(dt)
+    now_n = to_naive_utc(now_dt or utcnow_naive())
+    if not dt_n:
+        return "-"
+    if now_n < dt_n:
+        return "Ahora"
+    sec = int((now_n - dt_n).total_seconds())
+    if sec < 60:
+        return "Hace segundos"
+    mins = sec // 60
+    if mins < 60:
+        return f"Hace {mins} min"
+    hours = mins // 60
+    if hours < 24:
+        return f"Hace {hours} h"
+    days = hours // 24
+    return f"Hace {days} d"
+
+
+def _admin_action_meta(action):
+    action_key = (action or "").strip().lower()
+    mapping = {
+        "admin_grant": ("Permisos admin actualizados", "fa-user-shield", "ok"),
+        "admin_revoke": ("Acceso admin revocado", "fa-user-slash", "warn"),
+        "user_status_change": ("Estado de cuenta cambiado", "fa-user-gear", "warn"),
+        "user_suspend": ("Cuenta suspendida", "fa-clock", "warn"),
+        "user_unsuspend": ("Suspension retirada", "fa-unlock", "ok"),
+        "user_delete": ("Cuenta eliminada", "fa-trash", "off"),
+        "user_bulk_status_change": ("Cambio masivo de cuentas", "fa-users-gear", "warn"),
+        "user_bulk_export": ("Exportacion masiva", "fa-file-export", "ok"),
+    }
+    return mapping.get(action_key, ("Evento administrativo", "fa-clipboard-list", "ok"))
+
+
+def _admin_activity_feed(limit=12):
+    rows = _admin_recent_logs(limit=limit)
+    now_utc = utcnow_naive()
+    items = []
+    for log_row, actor_user in rows:
+        title, icon, tone = _admin_action_meta(log_row.action)
+        actor_name = "Sistema"
+        if actor_user:
+            actor_name = (actor_user.name or actor_user.email or "Sistema").strip()
+        target = f"Usuario #{log_row.target_user_id}" if log_row.target_user_id else "Sin objetivo"
+        detail = (log_row.detail or "").strip()
+        if len(detail) > 160:
+            detail = detail[:157] + "..."
+        items.append({
+            "title": title,
+            "icon": icon,
+            "tone": tone,
+            "actor": actor_name,
+            "target": target,
+            "detail": detail or "-",
+            "when": _time_ago_es(log_row.created_at, now_utc),
+            "at": _format_dt_human(log_row.created_at),
+        })
+    return items
+
+
+def _admin_alerts_payload():
+    now_utc = utcnow_naive()
+    items = []
+    critical = 0
+    warning = 0
+
+    blocked_login = LoginAttempt.query.filter(
+        LoginAttempt.blocked_until.isnot(None),
+        LoginAttempt.blocked_until > now_utc
+    ).count()
+    if blocked_login > 0:
+        items.append({
+            "tone": "off",
+            "icon": "fa-user-lock",
+            "title": "Cuentas bloqueadas por intentos",
+            "detail": f"Bloqueos activos en login: {blocked_login}",
+        })
+        critical += 1
+
+    blocked_rate = RateLimit.query.filter(
+        RateLimit.blocked_until.isnot(None),
+        RateLimit.blocked_until > now_utc
+    ).count()
+    if blocked_rate > 0:
+        items.append({
+            "tone": "warn",
+            "icon": "fa-gauge-high",
+            "title": "Rate limits activos",
+            "detail": f"Claves temporalmente bloqueadas: {blocked_rate}",
+        })
+        warning += 1
+
+    blocked_reset_ip = ResetIPRequest.query.filter(
+        ResetIPRequest.blocked_until.isnot(None),
+        ResetIPRequest.blocked_until > now_utc
+    ).count()
+    if blocked_reset_ip > 0:
+        items.append({
+            "tone": "warn",
+            "icon": "fa-shield-halved",
+            "title": "Bloqueos en recuperacion por IP",
+            "detail": f"IPs bloqueadas en reset: {blocked_reset_ip}",
+        })
+        warning += 1
+
+    suspended_users = User.query.filter(
+        User.suspended_until.isnot(None),
+        User.suspended_until > now_utc
+    ).count()
+    if suspended_users > 0:
+        items.append({
+            "tone": "warn",
+            "icon": "fa-clock",
+            "title": "Cuentas suspendidas",
+            "detail": f"Cuentas con suspension activa: {suspended_users}",
+        })
+        warning += 1
+
+    recent_critical_events = AdminAuditLog.query.filter(
+        AdminAuditLog.created_at >= (now_utc - timedelta(hours=12)),
+        AdminAuditLog.action.in_(["user_delete", "admin_revoke"])
+    ).count()
+    if recent_critical_events > 0:
+        items.append({
+            "tone": "off",
+            "icon": "fa-triangle-exclamation",
+            "title": "Eventos administrativos criticos",
+            "detail": f"Eventos en ultimas 12h: {recent_critical_events}",
+        })
+        critical += 1
+
+    gemini_count = len([k for k in LISTA_DE_CLAVES if k])
+    if gemini_count == 0:
+        items.append({
+            "tone": "off",
+            "icon": "fa-robot",
+            "title": "Gemini sin claves",
+            "detail": "No hay claves disponibles para responder.",
+        })
+        critical += 1
+
+    if not items:
+        items.append({
+            "tone": "ok",
+            "icon": "fa-circle-check",
+            "title": "Sin alertas criticas",
+            "detail": "El sistema se mantiene estable en este momento.",
+        })
+
+    return {
+        "critical_count": critical,
+        "warning_count": warning,
+        "items": items,
+        "generated_at": _format_dt_human(now_utc),
+    }
+
+
 def _admin_security_data(limit=100):
     login_attempts = LoginAttempt.query.order_by(LoginAttempt.id.desc()).limit(limit).all()
     reset_ip_rows = ResetIPRequest.query.order_by(ResetIPRequest.id.desc()).limit(limit).all()
     rate_limit_rows = RateLimit.query.order_by(RateLimit.id.desc()).limit(limit).all()
     return login_attempts, reset_ip_rows, rate_limit_rows
+
+
+def _security_can_manage_actions(user: User) -> bool:
+    role = _effective_admin_role(user)
+    perms = _effective_admin_permissions(user)
+    return bool(
+        role == "super_admin"
+        or "manage_users" in perms
+        or "manage_settings" in perms
+    )
+
+
+def _security_block_state(blocked_until, now_utc=None):
+    now_utc = now_utc or utcnow_naive()
+    until = to_naive_utc(blocked_until)
+    is_blocked = bool(until and until > now_utc)
+    return is_blocked, until
+
+
+def _admin_security_redirect():
+    base = url_for("admin_security_page")
+    candidate = (request.form.get("return_to") or request.referrer or "").strip()
+    if not candidate:
+        return redirect(base)
+    if candidate.startswith(base):
+        return redirect(candidate)
+    try:
+        parsed = urlparse(candidate)
+    except Exception:
+        parsed = None
+    if parsed and parsed.path == base:
+        safe = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        return redirect(safe)
+    return redirect(base)
+
+
+def _security_duration_delta(value_raw, unit_raw):
+    value = _safe_int(value_raw, 0)
+    unit = (unit_raw or "").strip().lower()
+    if value < 1:
+        return None
+    if unit == "minutes":
+        return timedelta(minutes=value)
+    if unit == "hours":
+        return timedelta(hours=value)
+    if unit == "days":
+        return timedelta(days=value)
+    return None
 
 
 def _safe_int(value, default):
@@ -1928,6 +2667,9 @@ def admin_panel():
 
     stats = _admin_stats()
     charts = _admin_dashboard_charts(days=7)
+    system_health = _admin_system_health()
+    activity_feed = _admin_activity_feed(limit=12)
+    alerts_payload = _admin_alerts_payload()
     top_chat_users = (
         db.session.query(
             User.id,
@@ -1960,7 +2702,19 @@ def admin_panel():
         account_status_values=charts["account_status_values"],
         failed_ip_labels=charts["failed_ip_labels"],
         failed_ip_values=charts["failed_ip_values"],
+        system_health=system_health,
+        activity_feed=activity_feed,
+        alerts_payload=alerts_payload,
+        can_view_logs=("view_logs" in perms),
     )
+
+
+@app.route('/admin/alerts_feed')
+@login_required
+@admin_required(permission="view_dashboard")
+def admin_alerts_feed():
+    payload = _admin_alerts_payload()
+    return jsonify({"success": True, **payload})
 
 
 @app.route('/admin/admins')
@@ -1974,6 +2728,30 @@ def admin_admins_page():
     per_options = [5, 10, 20, 50, 100]
 
     admins_data_all = _admin_admins_data()
+    admin_last_activity_rows = (
+        db.session.query(
+            AdminAuditLog.actor_user_id.label("uid"),
+            func.max(AdminAuditLog.created_at).label("last_at"),
+        )
+        .filter(AdminAuditLog.actor_user_id.isnot(None))
+        .group_by(AdminAuditLog.actor_user_id)
+        .all()
+    )
+    admin_last_activity_map = {int(r.uid): r.last_at for r in admin_last_activity_rows if r.uid}
+    for row in admins_data_all:
+        uid = int(row["user_row"].id)
+        last_at = admin_last_activity_map.get(uid)
+        row["last_activity_at"] = last_at
+        row["last_activity_ago"] = _time_ago_es(last_at) if last_at else "Sin actividad"
+        row["role_label"] = "Super Admin" if row["role_row"].role == "super_admin" else "Admin"
+        row["is_protected"] = bool(row["role_row"].role == "super_admin")
+
+    admins_super_total = sum(1 for row in admins_data_all if row["role_row"].role == "super_admin")
+    admins_standard_total = sum(1 for row in admins_data_all if row["role_row"].role == "admin")
+    admins_active_total = sum(1 for row in admins_data_all if bool(row["role_row"].is_active))
+    admins_inactive_total = max(0, len(admins_data_all) - admins_active_total)
+    admins_with_activity_total = sum(1 for row in admins_data_all if row["last_activity_at"])
+    admins_recent_activity = _admin_activity_feed(limit=4)
     admins_q = (request.args.get("admins_q") or "").strip().lower()
     admins_role = (request.args.get("admins_role") or "").strip().lower()
     admins_state = (request.args.get("admins_state") or "").strip().lower()
@@ -2004,7 +2782,12 @@ def admin_admins_page():
 
     logs_all = _admin_recent_logs(limit=3000)
     logs_q = (request.args.get("logs_q") or "").strip().lower()
+    logs_actor = (request.args.get("logs_actor") or "").strip().lower()
     logs_action = (request.args.get("logs_action") or "").strip().lower()
+    logs_date_from = _parse_date_ymd(request.args.get("logs_date_from"))
+    logs_date_to = _parse_date_ymd(request.args.get("logs_date_to"))
+    if logs_date_to:
+        logs_date_to = logs_date_to + timedelta(days=1)
     if logs_q:
         logs_all = [
             row for row in logs_all
@@ -2014,8 +2797,18 @@ def admin_admins_page():
             or logs_q == str(row[0].id)
             or logs_q == str(row[0].target_user_id or "")
         ]
+    if logs_actor:
+        logs_all = [
+            row for row in logs_all
+            if logs_actor in ((row[1].email if row[1] else "") or "").lower()
+            or logs_actor in ((row[1].name if row[1] else "") or "").lower()
+        ]
     if logs_action:
         logs_all = [row for row in logs_all if logs_action in (row[0].action or "").lower()]
+    if logs_date_from:
+        logs_all = [row for row in logs_all if row[0].created_at and row[0].created_at >= logs_date_from]
+    if logs_date_to:
+        logs_all = [row for row in logs_all if row[0].created_at and row[0].created_at < logs_date_to]
 
     per_logs = _safe_int(request.args.get("per_logs"), 20)
     if per_logs not in per_options:
@@ -2027,6 +2820,22 @@ def admin_admins_page():
     logs_pagination = _build_pagination_links(
         "admin_admins_page", args, "page_logs", "per_logs", page_logs, per_logs, logs_total_pages
     )
+    logs_timeline = []
+    for log_row, actor_user in recent_admin_logs:
+        title, icon, tone = _admin_action_meta(log_row.action)
+        logs_timeline.append({
+            "log_row": log_row,
+            "actor_user": actor_user,
+            "title": title,
+            "icon": icon,
+            "tone": tone,
+            "when": _time_ago_es(log_row.created_at),
+        })
+    logs_action_options = sorted({
+        (row[0].action or "").strip()
+        for row in logs_all
+        if (row[0].action or "").strip()
+    })
 
     return render_template(
         'admin_admins.html',
@@ -2038,21 +2847,34 @@ def admin_admins_page():
         total_admins=stats["total_admins"],
         admins_data=admins_data,
         recent_admin_logs=recent_admin_logs,
+        logs_timeline=logs_timeline,
         admins_q=admins_q,
         admins_role=admins_role,
         admins_state=admins_state,
         logs_q=logs_q,
+        logs_actor=logs_actor,
         logs_action=logs_action,
+        logs_date_from=(request.args.get("logs_date_from") or ""),
+        logs_date_to=(request.args.get("logs_date_to") or ""),
+        logs_action_options=logs_action_options,
         per_options=per_options,
         per_admins=per_admins,
         per_logs=per_logs,
         admins_total=admins_total,
         logs_total=logs_total,
+        admins_super_total=admins_super_total,
+        admins_standard_total=admins_standard_total,
+        admins_active_total=admins_active_total,
+        admins_inactive_total=admins_inactive_total,
+        admins_with_activity_total=admins_with_activity_total,
+        admins_recent_activity=admins_recent_activity,
         admins_pagination=admins_pagination,
         logs_pagination=logs_pagination,
         all_permissions=sorted(ALL_ADMIN_PERMISSIONS, key=lambda p: _permission_label_es(p)),
         default_permissions=sorted(DEFAULT_ADMIN_PERMISSIONS, key=lambda p: _permission_label_es(p)),
         permission_labels_es=PERMISSION_LABELS_ES,
+        permission_groups_es=PERMISSION_GROUPS_ES,
+        super_admin_emails=SUPER_ADMIN_EMAILS,
     )
 
 
@@ -2099,8 +2921,10 @@ def admin_users_page():
     return render_template(
         'admin_users.html',
         admin_role=role,
+        super_admin_emails=SUPER_ADMIN_EMAILS,
         admin_permissions=sorted(perms, key=lambda p: _permission_label_es(p)),
         can_manage_users=("manage_users" in perms),
+        can_export_reports=("export_reports" in perms),
         is_super_admin=(role == "super_admin"),
         total_users=stats["total_users"],
         total_chats=stats["total_chats"],
@@ -2126,40 +2950,86 @@ def admin_logs_page():
     role = _effective_admin_role(current_user)
     perms = _effective_admin_permissions(current_user)
     stats = _admin_stats()
+    now_utc = utcnow_naive()
     args = request.args.to_dict(flat=True)
     per_options = [5, 10, 20, 50, 100]
-    logs_all = _admin_recent_logs(limit=3000)
+    logs_all = _admin_recent_logs(limit=5000)
     q = (request.args.get("q") or "").strip().lower()
     action = (request.args.get("action") or "").strip().lower()
+    actor = (request.args.get("actor") or "").strip().lower()
+    ip = (request.args.get("ip") or "").strip().lower()
+    target_user = (request.args.get("target_user") or "").strip().lower()
+    event_id = (request.args.get("event_id") or "").strip()
+    request_id = (request.args.get("request_id") or "").strip().lower()
+    severity = (request.args.get("severity") or "").strip().lower()
     date_from = _parse_date_ymd(request.args.get("date_from"))
     date_to = _parse_date_ymd(request.args.get("date_to"))
     if date_to:
         date_to = date_to + timedelta(days=1)
 
-    if q:
-        logs_all = [
-            row for row in logs_all
-            if q in ((row[1].email if row[1] else "") or "").lower()
-            or q in (row[0].action or "").lower()
-            or q in (row[0].detail or "").lower()
-            or q in str(row[0].id)
-            or q == str(row[0].target_user_id or "")
-        ]
-    if action:
-        logs_all = [row for row in logs_all if action in (row[0].action or "").lower()]
-    if date_from:
-        logs_all = [row for row in logs_all if row[0].created_at and row[0].created_at >= date_from]
-    if date_to:
-        logs_all = [row for row in logs_all if row[0].created_at and row[0].created_at < date_to]
+    logs_action_options = sorted({
+        (row[0].action or "").strip()
+        for row in logs_all
+        if (row[0].action or "").strip()
+    })
+    logs_actor_options = sorted({
+        ((row[1].email if row[1] else "") or "").strip()
+        for row in logs_all
+        if ((row[1].email if row[1] else "") or "").strip()
+    })[:120]
+
+    filtered_logs = _admin_filter_logs_rows(
+        logs_all,
+        q=q,
+        action=action,
+        actor=actor,
+        ip=ip,
+        target_user=target_user,
+        event_id=event_id,
+        request_id=request_id,
+        severity=severity,
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+    enriched_all = _admin_enrich_logs_rows(filtered_logs, now_utc)
+    logs_total = len(filtered_logs)
+
+    events_today = 0
+    critical_today = 0
+    actors_unique = set()
+    ip_counter = Counter()
+    for item in enriched_all:
+        created = to_naive_utc(item["log_row"].created_at)
+        if created and created.date() == now_utc.date():
+            events_today += 1
+            if item["severity_key"] == "critical":
+                critical_today += 1
+        actor_email = ((item["actor_user"].email if item["actor_user"] else "") or "").strip().lower()
+        if actor_email:
+            actors_unique.add(actor_email)
+        ip_val = (item["log_row"].ip or "").strip()
+        if ip_val:
+            ip_counter[ip_val] += 1
+    suspicious_ips = len([ip_key for ip_key, cnt in ip_counter.items() if cnt >= 3])
+    timeline_items = enriched_all[:12]
 
     per_page = _safe_int(request.args.get("per_page"), 20)
     if per_page not in per_options:
         per_page = 20
     page = _safe_int(request.args.get("page"), 1)
-    recent_admin_logs, logs_total, logs_total_pages, page = _slice_with_pagination(logs_all, page, per_page)
+    paginated_rows, logs_total, logs_total_pages, page = _slice_with_pagination(filtered_logs, page, per_page)
     logs_pagination = _build_pagination_links(
         "admin_logs_page", args, "page", "per_page", page, per_page, logs_total_pages
     )
+    table_rows = _admin_enrich_logs_rows(paginated_rows, now_utc)
+
+    export_args = {}
+    for key in ["q", "action", "actor", "ip", "target_user", "event_id", "request_id", "severity", "date_from", "date_to"]:
+        val = request.args.get(key)
+        if val:
+            export_args[key] = val
+    export_query = urlencode(export_args)
 
     return render_template(
         'admin_logs.html',
@@ -2169,16 +3039,48 @@ def admin_logs_page():
         total_chats=stats["total_chats"],
         total_messages=stats["total_messages"],
         total_admins=stats["total_admins"],
-        recent_admin_logs=recent_admin_logs,
+        timeline_items=timeline_items,
+        table_rows=table_rows,
         q=q,
         action=action,
+        actor=actor,
+        ip=ip,
+        target_user=target_user,
+        event_id=event_id,
+        request_id=request_id,
+        severity=severity,
+        logs_action_options=logs_action_options,
+        logs_actor_options=logs_actor_options,
         date_from=(request.args.get("date_from") or ""),
         date_to=(request.args.get("date_to") or ""),
         per_page=per_page,
         per_options=per_options,
         logs_total=logs_total,
+        events_today=events_today,
+        critical_today=critical_today,
+        actors_unique=len(actors_unique),
+        suspicious_ips=suspicious_ips,
+        export_query=export_query,
+        can_cleanup_logs=(role == "super_admin"),
+        retention_days=ADMIN_LOG_RETENTION_DAYS,
         logs_pagination=logs_pagination,
     )
+
+
+@app.route('/admin/logs/cleanup', methods=['POST'])
+@login_required
+@admin_required(super_only=True)
+def admin_logs_cleanup():
+    deleted = _cleanup_old_admin_logs(force=True)
+    if deleted > 0:
+        _add_admin_audit(
+            "logs_cleanup",
+            detail=f"deleted={deleted}; retention_days={ADMIN_LOG_RETENTION_DAYS}",
+        )
+        flash(f"Limpieza aplicada: {deleted} logs eliminados por retencion.", "success")
+    else:
+        flash("No habia logs antiguos para limpiar.", "warning")
+    return redirect(url_for('admin_logs_page'))
 
 
 @app.route('/admin/seguridad')
@@ -2188,9 +3090,71 @@ def admin_security_page():
     role = _effective_admin_role(current_user)
     perms = _effective_admin_permissions(current_user)
     stats = _admin_stats()
+    now_utc = utcnow_naive()
+    can_security_actions = _security_can_manage_actions(current_user)
     args = request.args.to_dict(flat=True)
     per_options = [5, 10, 20, 50, 100]
     login_attempts_all, reset_ip_all, rate_limit_all = _admin_security_data(limit=5000)
+    security_blocks_all = (
+        SecurityBlock.query.filter_by(is_active=True)
+        .filter(SecurityBlock.blocked_until > now_utc)
+        .order_by(SecurityBlock.blocked_until.desc(), SecurityBlock.id.desc())
+        .limit(5000)
+        .all()
+    )
+
+    login_blocked_active = 0
+    reset_blocked_active = 0
+    rate_blocked_active = 0
+    login_risky_rows = 0
+    recent_lock_events = 0
+
+    for row in login_attempts_all:
+        is_blocked, until = _security_block_state(row.blocked_until, now_utc)
+        attempts = int(row.attempts or 0)
+        row.status_key = "off" if is_blocked else ("warn" if attempts > 0 else "ok")
+        row.status_label = "Bloqueado" if is_blocked else ("En observacion" if attempts > 0 else "Normal")
+        row.blocked_until_human = _format_dt_human(until) if until else "-"
+        row.can_unlock = bool(is_blocked or attempts > 0)
+        if is_blocked:
+            login_blocked_active += 1
+        if attempts >= max(3, LOGIN_MAX_ATTEMPTS - 2):
+            login_risky_rows += 1
+        first_at = to_naive_utc(row.first_attempt_at)
+        if first_at and (now_utc - first_at) <= timedelta(hours=24) and is_blocked:
+            recent_lock_events += 1
+
+    for row in reset_ip_all:
+        is_blocked, until = _security_block_state(row.blocked_until, now_utc)
+        attempts = int(row.attempts or 0)
+        row.status_key = "off" if is_blocked else ("warn" if attempts > 0 else "ok")
+        row.status_label = "Bloqueado" if is_blocked else ("En observacion" if attempts > 0 else "Normal")
+        row.blocked_until_human = _format_dt_human(until) if until else "-"
+        row.can_unlock = bool(is_blocked or attempts > 0)
+        if is_blocked:
+            reset_blocked_active += 1
+
+    for row in rate_limit_all:
+        is_blocked, until = _security_block_state(row.blocked_until, now_utc)
+        count = int(row.count or 0)
+        row.status_key = "off" if is_blocked else ("warn" if count > 0 else "ok")
+        row.status_label = "Bloqueado" if is_blocked else ("Activo" if count > 0 else "Limpio")
+        row.blocked_until_human = _format_dt_human(until) if until else "-"
+        row.can_unlock = bool(is_blocked or count > 0)
+        if is_blocked:
+            rate_blocked_active += 1
+
+    manual_block_active = len(security_blocks_all)
+    total_active_blocks = login_blocked_active + reset_blocked_active + rate_blocked_active + manual_block_active
+    if total_active_blocks >= 10:
+        security_risk_label = "Riesgo alto"
+        security_risk_tone = "off"
+    elif total_active_blocks >= 3:
+        security_risk_label = "Riesgo medio"
+        security_risk_tone = "warn"
+    else:
+        security_risk_label = "Riesgo controlado"
+        security_risk_tone = "ok"
 
     login_q = (request.args.get("login_q") or "").strip().lower()
     if login_q:
@@ -2210,6 +3174,20 @@ def admin_security_page():
             r for r in rate_limit_all
             if rate_q in (r.key or "").lower() or rate_q == str(r.id)
         ]
+
+    block_q = (request.args.get("block_q") or "").strip().lower()
+    if block_q:
+        security_blocks_all = [
+            b for b in security_blocks_all
+            if block_q in (b.target or "").lower()
+            or block_q in (b.reason or "").lower()
+            or block_q in (b.block_type or "").lower()
+            or block_q == str(b.id)
+        ]
+    for b in security_blocks_all:
+        b.type_label = "Correo" if b.block_type == "email" else "IP"
+        b.until_human = _format_dt_human(b.blocked_until)
+        b.status_key = "off"
 
     per_login = _safe_int(request.args.get("per_login"), 10)
     if per_login not in per_options:
@@ -2244,31 +3222,290 @@ def admin_security_page():
         "admin_security_page", args, "page_rate", "per_rate", page_rate, per_rate, rate_total_pages
     )
 
+    per_block = _safe_int(request.args.get("per_block"), 10)
+    if per_block not in per_options:
+        per_block = 10
+    page_block = _safe_int(request.args.get("page_block"), 1)
+    security_blocks, block_total, block_total_pages, page_block = _slice_with_pagination(
+        security_blocks_all, page_block, per_block
+    )
+    block_pagination = _build_pagination_links(
+        "admin_security_page", args, "page_block", "per_block", page_block, per_block, block_total_pages
+    )
+
     return render_template(
         'admin_security.html',
         admin_role=role,
         admin_permissions=sorted(perms, key=lambda p: _permission_label_es(p)),
+        can_security_actions=can_security_actions,
         total_users=stats["total_users"],
         total_chats=stats["total_chats"],
         total_messages=stats["total_messages"],
         total_admins=stats["total_admins"],
+        security_risk_label=security_risk_label,
+        security_risk_tone=security_risk_tone,
+        total_active_blocks=total_active_blocks,
+        login_blocked_active=login_blocked_active,
+        reset_blocked_active=reset_blocked_active,
+        rate_blocked_active=rate_blocked_active,
+        manual_block_active=manual_block_active,
+        login_risky_rows=login_risky_rows,
+        recent_lock_events=recent_lock_events,
         login_attempts=login_attempts,
         reset_ip_rows=reset_ip_rows,
         rate_limit_rows=rate_limit_rows,
+        security_blocks=security_blocks,
         login_q=login_q,
         reset_q=reset_q,
         rate_q=rate_q,
+        block_q=block_q,
         per_options=per_options,
         per_login=per_login,
         per_reset=per_reset,
         per_rate=per_rate,
+        per_block=per_block,
         login_total=login_total,
         reset_total=reset_total,
         rate_total=rate_total,
+        block_total=block_total,
         login_pagination=login_pagination,
         reset_pagination=reset_pagination,
         rate_pagination=rate_pagination,
+        block_pagination=block_pagination,
     )
+
+
+@app.route('/admin/seguridad/login/unlock/<int:row_id>', methods=['POST'])
+@login_required
+@admin_required(permission="view_security")
+def admin_security_unlock_login(row_id):
+    if not _security_can_manage_actions(current_user):
+        flash("No tienes permisos para ejecutar acciones de seguridad.", "error")
+        return _admin_security_redirect()
+
+    row = db.session.get(LoginAttempt, row_id)
+    if not row:
+        flash("Registro de login no encontrado.", "error")
+        return _admin_security_redirect()
+
+    attempts_before = int(row.attempts or 0)
+    blocked_before = _format_dt_human(row.blocked_until)
+    row.attempts = 0
+    row.first_attempt_at = None
+    row.blocked_until = None
+    db.session.commit()
+
+    _add_admin_audit(
+        "security_login_unlock",
+        detail=(
+            f"id={row.id}; email={row.email or '-'}; ip={row.ip or '-'}; "
+            f"attempts_before={attempts_before}; blocked_until_before={blocked_before}"
+        ),
+    )
+    flash("Login desbloqueado y contador reiniciado.", "success")
+    return _admin_security_redirect()
+
+
+@app.route('/admin/seguridad/reset_ip/unlock/<int:row_id>', methods=['POST'])
+@login_required
+@admin_required(permission="view_security")
+def admin_security_unlock_reset_ip(row_id):
+    if not _security_can_manage_actions(current_user):
+        flash("No tienes permisos para ejecutar acciones de seguridad.", "error")
+        return _admin_security_redirect()
+
+    row = db.session.get(ResetIPRequest, row_id)
+    if not row:
+        flash("Registro de reset por IP no encontrado.", "error")
+        return _admin_security_redirect()
+
+    attempts_before = int(row.attempts or 0)
+    blocked_before = _format_dt_human(row.blocked_until)
+    row.attempts = 0
+    row.first_attempt_at = None
+    row.last_sent_at = None
+    row.blocked_until = None
+    db.session.commit()
+
+    _add_admin_audit(
+        "security_reset_ip_unlock",
+        detail=(
+            f"id={row.id}; ip={row.ip or '-'}; attempts_before={attempts_before}; "
+            f"blocked_until_before={blocked_before}"
+        ),
+    )
+    flash("Registro de reset por IP desbloqueado.", "success")
+    return _admin_security_redirect()
+
+
+@app.route('/admin/seguridad/rate_limit/clear/<int:row_id>', methods=['POST'])
+@login_required
+@admin_required(permission="view_security")
+def admin_security_clear_rate_limit(row_id):
+    if not _security_can_manage_actions(current_user):
+        flash("No tienes permisos para ejecutar acciones de seguridad.", "error")
+        return _admin_security_redirect()
+
+    row = db.session.get(RateLimit, row_id)
+    if not row:
+        flash("Registro de rate limit no encontrado.", "error")
+        return _admin_security_redirect()
+
+    count_before = int(row.count or 0)
+    blocked_before = _format_dt_human(row.blocked_until)
+    row.count = 0
+    row.window_start = utcnow_naive()
+    row.blocked_until = None
+    db.session.commit()
+
+    _add_admin_audit(
+        "security_rate_limit_clear",
+        detail=(
+            f"id={row.id}; key={row.key or '-'}; count_before={count_before}; "
+            f"blocked_until_before={blocked_before}"
+        ),
+    )
+    flash("Rate limit reiniciado correctamente.", "success")
+    return _admin_security_redirect()
+
+
+@app.route('/admin/seguridad/block/email', methods=['POST'])
+@login_required
+@admin_required(permission="view_security")
+def admin_security_block_email():
+    if not _security_can_manage_actions(current_user):
+        flash("No tienes permisos para ejecutar acciones de seguridad.", "error")
+        return _admin_security_redirect()
+
+    email = _normalize_email(request.form.get("email"))
+    reason = (request.form.get("reason") or "").strip()
+    delta = _security_duration_delta(request.form.get("duration_value"), request.form.get("duration_unit"))
+
+    if not email or not EMAIL_RE.match(email):
+        flash("Debes ingresar un correo valido para bloquear.", "error")
+        return _admin_security_redirect()
+    if not delta:
+        flash("Duracion invalida para bloqueo de correo.", "error")
+        return _admin_security_redirect()
+
+    until = utcnow_naive() + delta
+    row = SecurityBlock.query.filter_by(block_type="email", target=email).first()
+    if not row:
+        row = SecurityBlock(
+            block_type="email",
+            target=email,
+            created_by_user_id=current_user.id,
+        )
+        db.session.add(row)
+    row.reason = reason or "Bloqueo manual de correo"
+    row.blocked_until = until
+    row.is_active = True
+    row.created_by_user_id = current_user.id
+    row.updated_at = utcnow_naive()
+    db.session.commit()
+
+    _add_admin_audit(
+        "security_block_email_set",
+        detail=f"email={email}; until={_format_dt_human(until)}; reason={row.reason}",
+    )
+    flash(f"Bloqueo por correo activo hasta {_format_dt_human(until)}.", "success")
+    return _admin_security_redirect()
+
+
+@app.route('/admin/seguridad/block/ip', methods=['POST'])
+@login_required
+@admin_required(permission="view_security")
+def admin_security_block_ip():
+    if not _security_can_manage_actions(current_user):
+        flash("No tienes permisos para ejecutar acciones de seguridad.", "error")
+        return _admin_security_redirect()
+
+    ip = _normalize_ip(request.form.get("ip"))
+    reason = (request.form.get("reason") or "").strip()
+    delta = _security_duration_delta(request.form.get("duration_value"), request.form.get("duration_unit"))
+
+    if not ip:
+        flash("Debes ingresar una IP valida para bloquear.", "error")
+        return _admin_security_redirect()
+    if not delta:
+        flash("Duracion invalida para bloqueo de IP.", "error")
+        return _admin_security_redirect()
+
+    until = utcnow_naive() + delta
+    row = SecurityBlock.query.filter_by(block_type="ip", target=ip).first()
+    if not row:
+        row = SecurityBlock(
+            block_type="ip",
+            target=ip,
+            created_by_user_id=current_user.id,
+        )
+        db.session.add(row)
+    row.reason = reason or "Bloqueo manual de IP"
+    row.blocked_until = until
+    row.is_active = True
+    row.created_by_user_id = current_user.id
+    row.updated_at = utcnow_naive()
+    db.session.commit()
+
+    _add_admin_audit(
+        "security_block_ip_set",
+        detail=f"ip={ip}; until={_format_dt_human(until)}; reason={row.reason}",
+    )
+    flash(f"Bloqueo por IP activo hasta {_format_dt_human(until)}.", "success")
+    return _admin_security_redirect()
+
+
+@app.route('/admin/seguridad/block/remove/<int:block_id>', methods=['POST'])
+@login_required
+@admin_required(permission="view_security")
+def admin_security_remove_block(block_id):
+    if not _security_can_manage_actions(current_user):
+        flash("No tienes permisos para ejecutar acciones de seguridad.", "error")
+        return _admin_security_redirect()
+
+    row = db.session.get(SecurityBlock, block_id)
+    if not row:
+        flash("Bloqueo no encontrado.", "error")
+        return _admin_security_redirect()
+
+    row.is_active = False
+    row.updated_at = utcnow_naive()
+    db.session.commit()
+
+    _add_admin_audit(
+        "security_block_remove",
+        detail=f"id={row.id}; type={row.block_type}; target={row.target}",
+    )
+    flash("Bloqueo manual retirado.", "success")
+    return _admin_security_redirect()
+
+
+@app.route('/admin/seguridad/force_logout', methods=['POST'])
+@login_required
+@admin_required(permission="view_security")
+def admin_security_force_logout():
+    if not _security_can_manage_actions(current_user):
+        flash("No tienes permisos para ejecutar acciones de seguridad.", "error")
+        return _admin_security_redirect()
+
+    email = _normalize_email(request.form.get("email"))
+    if not email:
+        flash("Debes ingresar un correo para cierre forzado.", "error")
+        return _admin_security_redirect()
+
+    user = User.query.filter(func.lower(User.email) == email).first()
+    if not user:
+        flash("No existe un usuario con ese correo.", "error")
+        return _admin_security_redirect()
+
+    _mark_force_logout(user.id)
+    _add_admin_audit(
+        "security_force_logout",
+        target_user_id=user.id,
+        detail=f"email={user.email}",
+    )
+    flash(f"Se marco cierre forzado de sesion para {user.email}.", "success")
+    return _admin_security_redirect()
 
 
 @app.route('/admin/reportes')
@@ -2378,19 +3615,139 @@ def admin_export_login_attempts_xlsx():
 @login_required
 @admin_required(permission="export_reports")
 def admin_export_audit_xlsx():
-    rows = _admin_recent_logs(limit=2000)
-    headers = ["Fecha", "Actor email", "Accion", "Usuario objetivo", "Detalle", "IP"]
+    rows = _admin_logs_for_export(limit=5000)
+    enriched = _admin_enrich_logs_rows(rows, utcnow_naive())
+    headers = ["Fecha", "Severidad", "Actor email", "Accion", "Usuario objetivo", "IP", "Request ID", "Metodo", "Ruta", "Modulo", "Detalle"]
     values = []
-    for log_row, actor_user in rows:
+    for item in enriched:
+        log_row = item["log_row"]
+        actor_user = item["actor_user"]
         values.append([
             log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else "",
+            item["severity_label"],
             actor_user.email if actor_user else "",
             log_row.action or "",
             log_row.target_user_id or "",
-            (log_row.detail or "").replace("\n", " ").replace("\r", " "),
             log_row.ip or "",
+            item["request_id"] or "",
+            item["method"] or "",
+            item["path"] or "",
+            item["module_name"] or "",
+            _mask_sensitive_text(log_row.detail or ""),
         ])
     return _build_xlsx_response("auditoria_admin", "Auditoria", headers, values)
+
+
+@app.route('/admin/export/auditoria.csv')
+@login_required
+@admin_required(permission="export_reports")
+def admin_export_audit_csv():
+    rows = _admin_logs_for_export(limit=5000)
+    enriched = _admin_enrich_logs_rows(rows, utcnow_naive())
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Fecha", "Severidad", "Actor", "Accion", "Usuario objetivo", "IP", "Request ID", "Metodo", "Ruta", "Modulo", "Detalle"])
+    for item in enriched:
+        log_row = item["log_row"]
+        actor_user = item["actor_user"]
+        writer.writerow([
+            log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else "",
+            item["severity_label"],
+            actor_user.email if actor_user else "",
+            log_row.action or "",
+            log_row.target_user_id or "",
+            log_row.ip or "",
+            item["request_id"] or "",
+            item["method"] or "",
+            item["path"] or "",
+            item["module_name"] or "",
+            _mask_sensitive_text(log_row.detail or ""),
+        ])
+
+    data = output.getvalue()
+    output.close()
+    return Response(
+        data,
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=auditoria_admin.csv"},
+    )
+
+
+@app.route('/admin/export/auditoria.pdf')
+@login_required
+@admin_required(permission="export_reports")
+def admin_export_audit_pdf():
+    rows = _admin_logs_for_export(limit=3000)
+    enriched = _admin_enrich_logs_rows(rows, utcnow_naive())
+    try:
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.units import mm
+        from reportlab.pdfgen import canvas
+    except Exception:
+        flash("No se pudo generar PDF. Falta dependencia reportlab.", "error")
+        return redirect(url_for("admin_logs_page"))
+
+    def _short(v, size):
+        txt = str(v or "")
+        return txt if len(txt) <= size else (txt[: size - 3] + "...")
+
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=landscape(A4))
+    width, height = landscape(A4)
+    y = height - 12 * mm
+
+    c.setTitle("Auditoria administrativa")
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(12 * mm, y, "Auditoria administrativa")
+    c.setFont("Helvetica", 8)
+    c.drawRightString(width - 12 * mm, y, f"Generado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    y -= 7 * mm
+
+    headers = ["Fecha", "Sev", "Accion", "Actor", "IP", "RID", "Detalle"]
+    widths = [32, 12, 40, 48, 26, 26, 96]
+
+    def _draw_header(cur_y):
+        c.setFont("Helvetica-Bold", 8)
+        x = 10 * mm
+        for idx, head in enumerate(headers):
+            c.drawString(x, cur_y, head)
+            x += widths[idx] * mm
+        return cur_y - 4.5 * mm
+
+    y = _draw_header(y)
+    c.setFont("Helvetica", 7)
+    for item in enriched:
+        log_row = item["log_row"]
+        actor_user = item["actor_user"]
+        row_vals = [
+            log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else "-",
+            item["severity_label"],
+            log_row.action or "-",
+            actor_user.email if actor_user else "-",
+            log_row.ip or "-",
+            item["request_id"] or "-",
+            _mask_sensitive_text(log_row.detail or "-"),
+        ]
+        if y < 14 * mm:
+            c.showPage()
+            y = height - 12 * mm
+            y = _draw_header(y)
+            c.setFont("Helvetica", 7)
+        x = 10 * mm
+        for idx, val in enumerate(row_vals):
+            limit = 18 if idx in (0, 2, 3, 6) else 12
+            c.drawString(x, y, _short(val, limit))
+            x += widths[idx] * mm
+        y -= 4.2 * mm
+
+    c.save()
+    buffer.seek(0)
+    return Response(
+        buffer.getvalue(),
+        mimetype="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=auditoria_admin.pdf"},
+    )
 
 
 @app.route('/admin/export/usuarios.json')
@@ -2431,7 +3788,8 @@ def admin_export_users_json():
 @login_required
 @admin_required(permission="export_reports")
 def admin_export_audit_json():
-    rows = _admin_recent_logs(limit=5000)
+    rows = _admin_logs_for_export(limit=5000)
+    enriched = _admin_enrich_logs_rows(rows, utcnow_naive())
     return jsonify({
         "success": True,
         "title": "Auditoria administrativa",
@@ -2439,17 +3797,22 @@ def admin_export_audit_json():
         "sections": [
             {
                 "title": "Eventos de auditoria",
-                "columns": ["Fecha", "Actor", "Accion", "Usuario objetivo", "Detalle", "IP"],
+                "columns": ["Fecha", "Severidad", "Actor", "Accion", "Usuario objetivo", "IP", "Request ID", "Metodo", "Ruta", "Modulo", "Detalle"],
                 "rows": [
                     [
-                        log_row.created_at.strftime('%Y-%m-%d %H:%M:%S') if log_row.created_at else "-",
-                        actor_user.email if actor_user else "-",
-                        log_row.action or "-",
-                        log_row.target_user_id or "-",
-                        (log_row.detail or "-").replace("\n", " ").replace("\r", " "),
-                        log_row.ip or "-",
+                        item["log_row"].created_at.strftime('%Y-%m-%d %H:%M:%S') if item["log_row"].created_at else "-",
+                        item["severity_label"],
+                        item["actor_user"].email if item["actor_user"] else "-",
+                        item["log_row"].action or "-",
+                        item["log_row"].target_user_id or "-",
+                        item["log_row"].ip or "-",
+                        item["request_id"] or "-",
+                        item["method"] or "-",
+                        item["path"] or "-",
+                        item["module_name"] or "-",
+                        _mask_sensitive_text(item["log_row"].detail or "-"),
                     ]
-                    for log_row, actor_user in rows
+                    for item in enriched
                 ],
             }
         ],
@@ -2634,6 +3997,107 @@ def admin_user_status(user_id):
     return redirect(url_for('admin_users_page'))
 
 
+@app.route('/admin/users_bulk', methods=['POST'])
+@login_required
+@admin_required(permission="manage_users")
+def admin_users_bulk():
+    action = (request.form.get("bulk_action") or "").strip().lower()
+    raw_ids = request.form.getlist("user_ids")
+
+    user_ids = []
+    seen = set()
+    for raw in raw_ids:
+        try:
+            uid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if uid > 0 and uid not in seen:
+            seen.add(uid)
+            user_ids.append(uid)
+
+    if not user_ids:
+        flash("Selecciona al menos un usuario para aplicar accion masiva.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    role = _effective_admin_role(current_user)
+    can_export = "export_reports" in _effective_admin_permissions(current_user)
+
+    if action == "export_xlsx":
+        if not can_export:
+            flash("No tienes permiso para exportar reportes.", "error")
+            return redirect(url_for('admin_users_page'))
+
+        selected = {int(uid) for uid in user_ids}
+        rows = [u for u in _admin_users_data() if int(u.id) in selected]
+        if not rows:
+            flash("No se encontraron usuarios validos para exportar.", "error")
+            return redirect(url_for('admin_users_page'))
+
+        headers = ["ID", "Nombre", "Email", "Registro", "Estado", "Suspendida hasta", "Chats", "Mensajes"]
+        values = []
+        now_utc = utcnow_naive()
+        for u in rows:
+            status_key, status_label, suspended_until = _user_status_data(u, now_utc)
+            values.append([
+                u.id,
+                u.name or "",
+                u.email or "",
+                u.created_at.strftime('%Y-%m-%d %H:%M:%S') if u.created_at else "",
+                status_label,
+                _format_dt_human(suspended_until) if status_key == "suspendida" else "",
+                int(u.chat_count or 0),
+                int(u.message_count or 0),
+            ])
+
+        _add_admin_audit(
+            "user_bulk_export",
+            detail=f"count={len(rows)}; user_ids={','.join(str(uid) for uid in user_ids)}"
+        )
+        return _build_xlsx_response("usuarios_seleccionados", "UsuariosSeleccionados", headers, values)
+
+    if action not in {"activate", "deactivate"}:
+        flash("Accion masiva invalida.", "error")
+        return redirect(url_for('admin_users_page'))
+
+    users = User.query.filter(User.id.in_(user_ids)).all()
+    changed = 0
+    skipped = 0
+    target_active = action == "activate"
+
+    for user in users:
+        if user.id == current_user.id:
+            skipped += 1
+            continue
+        if _is_super_admin_email(user.email) and role != "super_admin":
+            skipped += 1
+            continue
+
+        if bool(user.is_active_account) == target_active:
+            continue
+
+        user.is_active_account = target_active
+        if not target_active:
+            user.suspended_until = None
+        changed += 1
+
+    db.session.commit()
+    _add_admin_audit(
+        "user_bulk_status_change",
+        detail=(
+            f"action={action}; changed={changed}; skipped={skipped}; "
+            f"user_ids={','.join(str(uid) for uid in user_ids)}"
+        ),
+    )
+
+    if changed == 0 and skipped > 0:
+        flash("No se aplicaron cambios. Algunos usuarios no se pueden modificar.", "error")
+    else:
+        suffix = f" (omitidos: {skipped})" if skipped else ""
+        label = "activadas" if target_active else "desactivadas"
+        flash(f"Cuentas {label}: {changed}{suffix}.", "success")
+    return redirect(url_for('admin_users_page'))
+
+
 @app.route('/admin/user_suspend/<int:user_id>', methods=['POST'])
 @login_required
 @admin_required(permission="manage_users")
@@ -2746,13 +4210,81 @@ def new_chat():
 @app.route('/delete_chat/<int:chat_id>', methods=['POST'])
 @login_required
 def delete_chat(chat_id):
-    # FIX: SQLAlchemy 2.0 reemplaza Query.get() por session.get()
     chat = db.session.get(Conversation, chat_id)
-    if chat and chat.user_id == current_user.id:
+    if not chat or chat.user_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Chat no autorizado'}), 403
+
+    try:
+        shared_rows = SharedConversation.query.filter_by(conversation_id=chat.id).all()
+        shared_tokens = [row.token for row in shared_rows if row.token]
+        shared_links_deleted = 0
+        viewer_sessions_closed = 0
+
+        if shared_tokens:
+            viewer_sessions_closed = SharedViewerPresence.query.filter(
+                SharedViewerPresence.token.in_(shared_tokens)
+            ).delete(synchronize_session=False)
+
+        shared_links_deleted = SharedConversation.query.filter_by(
+            conversation_id=chat.id
+        ).delete(synchronize_session=False)
+
         db.session.delete(chat)
         db.session.commit()
-        return jsonify({'success': True})
-    return jsonify({'success': False}), 403
+        return jsonify({
+            'success': True,
+            'shared_links_deleted': int(shared_links_deleted or 0),
+            'viewer_sessions_closed': int(viewer_sessions_closed or 0),
+        })
+    except Exception as exc:
+        db.session.rollback()
+        log_event(
+            "CHAT_DELETE_FAIL",
+            user_id=current_user.id,
+            chat_id=chat_id,
+            err=type(exc).__name__,
+        )
+        return jsonify({'success': False, 'error': 'No se pudo eliminar este chat ahora.'}), 409
+
+
+@app.route('/delete_chat_info/<int:chat_id>', methods=['GET'])
+@login_required
+def delete_chat_info(chat_id):
+    chat = db.session.get(Conversation, chat_id)
+    if not chat or chat.user_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Chat no autorizado'}), 403
+
+    shared_rows = SharedConversation.query.filter_by(conversation_id=chat.id).all()
+    shared_tokens = [row.token for row in shared_rows if row.token]
+
+    active_viewers = 0
+    active_sessions = 0
+    if shared_tokens:
+        cutoff = utcnow_naive() - timedelta(minutes=3)
+        active_rows = SharedViewerPresence.query.filter(
+            SharedViewerPresence.token.in_(shared_tokens),
+            SharedViewerPresence.last_seen >= cutoff,
+        ).all()
+        active_viewers = len({
+            (row.email or "").strip().lower()
+            for row in active_rows
+            if (row.email or "").strip()
+        })
+        active_sessions = len({
+            f"{(row.token or '').strip()}::{(row.email or '').strip().lower()}"
+            for row in active_rows
+            if (row.token or "").strip()
+        })
+
+    return jsonify({
+        'success': True,
+        'chat_id': chat.id,
+        'chat_title': chat.title or "Conversacion",
+        'has_shared': bool(shared_tokens),
+        'shared_links': len(shared_tokens),
+        'active_viewers': int(active_viewers),
+        'active_sessions': int(active_sessions),
+    })
 
 
 @app.route('/rename_chat/<int:chat_id>', methods=['POST'])
@@ -2773,9 +4305,22 @@ def rename_chat(chat_id):
     if not title:
         return jsonify({'success': False, 'error': 'Título inválido'}), 400
 
+    if title == (chat.title or "").strip():
+        return jsonify({'success': True, 'title': chat.title, 'chat_id': chat.id})
+
     chat.title = title
-    db.session.commit()
-    return jsonify({'success': True, 'title': chat.title, 'chat_id': chat.id})
+    try:
+        db.session.commit()
+        return jsonify({'success': True, 'title': chat.title, 'chat_id': chat.id})
+    except Exception as exc:
+        db.session.rollback()
+        log_event(
+            "CHAT_RENAME_FAIL",
+            user_id=current_user.id,
+            chat_id=chat_id,
+            err=type(exc).__name__,
+        )
+        return jsonify({'success': False, 'error': 'No se pudo renombrar por ahora.'}), 500
 
 
 def _bool_flag(value, default=False):
@@ -3168,11 +4713,21 @@ def share_chat(chat_id):
 def shared_chat(token):
     shared = SharedConversation.query.filter_by(token=token).first()
     if not shared:
-        abort(404)
+        return render_template(
+            'shared_unavailable.html',
+            title="Enlace no disponible",
+            message="Este enlace ya no esta disponible o fue eliminado por el anfitrion.",
+            code="404"
+        ), 404
 
     chat = db.session.get(Conversation, shared.conversation_id)
     if not chat:
-        abort(404)
+        return render_template(
+            'shared_unavailable.html',
+            title="Conversacion eliminada",
+            message="La conversacion fue eliminada por el anfitrion.",
+            code="410"
+        ), 410
 
     session_email_key = f"shared_email_{token}"
     session_name_key = f"shared_name_{token}"
