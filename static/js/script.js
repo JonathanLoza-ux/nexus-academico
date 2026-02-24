@@ -344,7 +344,12 @@ function seleccionarMateria(materia) {
 function usarPrompt(texto) {
   const inp = document.getElementById('user-input');
   inp.value = texto;
-  if (window.innerWidth <= 768) toggleSidebar();
+  if (window.innerWidth <= 768) {
+    const sb = document.querySelector('.sidebar');
+    const ov = document.getElementById('overlay');
+    sb?.classList.remove('active');
+    ov?.classList.remove('active');
+  }
   inp.focus();
   enviarMensaje();
 }
