@@ -10,93 +10,359 @@
 </head>
 <body class="admin-page">
     <div class="admin-shell">
-        <header class="admin-topbar">
+        <header class="admin-topbar admin-exec-header">
             <div class="admin-brand">
-                <i class="fas fa-shield-alt"></i>
+                <i class="fas fa-file-export"></i>
                 <div>
-                    <h1>Reportes</h1>
-                    <p>Exportaciones para analisis y respaldo</p>
+                    <h1>Centro de reportes</h1>
+                    <p>Exportaciones administrativas para analisis, respaldo y auditoria.</p>
                 </div>
             </div>
-            <div class="admin-top-actions">
+            <div class="admin-header-meta">
+                <span class="admin-update-pill">
+                    <i class="fas fa-clock"></i>
+                    Ultima exportacion: <strong id="reportsLastExport">Sin registro</strong>
+                </span>
+                <span class="admin-role-pill {% if admin_role == 'super_admin' %}admin-role-pill--super{% else %}admin-role-pill--admin{% endif %}">
+                    <i class="fas {% if admin_role == 'super_admin' %}fa-crown{% else %}fa-user-shield{% endif %}"></i>
+                    {% if admin_role == "super_admin" %}Super Admin{% else %}Admin{% endif %}
+                </span>
                 <a class="admin-btn" href="{{ url_for('admin_panel') }}"><i class="fas fa-chart-line"></i> Dashboard</a>
+                {% if 'manage_admins' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_admins_page') }}"><i class="fas fa-user-shield"></i> Admins</a>
+                {% endif %}
                 {% if 'view_logs' in admin_permissions %}
                 <a class="admin-btn" href="{{ url_for('admin_logs_page') }}"><i class="fas fa-clipboard-list"></i> Logs</a>
                 {% endif %}
                 {% if 'view_users' in admin_permissions %}
                 <a class="admin-btn" href="{{ url_for('admin_users_page') }}"><i class="fas fa-users"></i> Usuarios</a>
                 {% endif %}
+                {% if 'view_security' in admin_permissions %}
+                <a class="admin-btn" href="{{ url_for('admin_security_page') }}"><i class="fas fa-lock"></i> Seguridad</a>
+                {% endif %}
                 <a class="admin-btn" href="{{ url_for('home') }}"><i class="fas fa-arrow-left"></i> Chat</a>
             </div>
         </header>
 
-        <section class="admin-kpi-grid">
-            <article class="admin-kpi-card"><span>Usuarios</span><strong>{{ total_users }}</strong></article>
-            <article class="admin-kpi-card"><span>Chats</span><strong>{{ total_chats }}</strong></article>
-            <article class="admin-kpi-card"><span>Mensajes</span><strong>{{ total_messages }}</strong></article>
-            <article class="admin-kpi-card"><span>Admins activos</span><strong>{{ total_admins }}</strong></article>
+        <section class="admin-hero-card admin-reports-hero">
+            <div class="admin-hero-main">
+                <p class="admin-hero-kicker">Control de exportaciones</p>
+                <h2>Reportes listos para operacion y cumplimiento</h2>
+                <p>Genera PDF y Excel para usuarios, auditoria y seguridad con trazabilidad en una sola pantalla.</p>
+            </div>
+            <div class="admin-hero-meta">
+                <article class="admin-hero-chip">
+                    <i class="fas fa-layer-group"></i>
+                    <div>
+                        <small>Modulos exportables</small>
+                        <strong>3</strong>
+                    </div>
+                </article>
+                <article class="admin-hero-chip">
+                    <i class="fas fa-file-pdf"></i>
+                    <div>
+                        <small>Formatos</small>
+                        <strong>PDF / XLSX</strong>
+                    </div>
+                </article>
+                <article class="admin-hero-chip">
+                    <i class="fas fa-shield-halved"></i>
+                    <div>
+                        <small>Estado</small>
+                        <strong id="reportsRuntimeStatus">Listo</strong>
+                    </div>
+                </article>
+            </div>
         </section>
 
-        <section class="admin-grid-two">
-            <article class="admin-panel-card">
-                <h2>Usuarios</h2>
-                <p style="color: var(--muted);">Incluye estado de cuenta, chats y mensajes por usuario.</p>
-                <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <button class="admin-btn primary" type="button" onclick="exportAdminPdf('usuarios')">
+        <section class="admin-kpi-grid">
+            <article class="admin-kpi-card admin-kpi-card--users">
+                <div class="admin-kpi-icon"><i class="fas fa-users"></i></div>
+                <div><span>Usuarios</span><strong>{{ total_users }}</strong></div>
+            </article>
+            <article class="admin-kpi-card admin-kpi-card--chat">
+                <div class="admin-kpi-icon"><i class="fas fa-comments"></i></div>
+                <div><span>Chats</span><strong>{{ total_chats }}</strong></div>
+            </article>
+            <article class="admin-kpi-card admin-kpi-card--msg">
+                <div class="admin-kpi-icon"><i class="fas fa-paper-plane"></i></div>
+                <div><span>Mensajes</span><strong>{{ total_messages }}</strong></div>
+            </article>
+            <article class="admin-kpi-card admin-kpi-card--admin">
+                <div class="admin-kpi-icon"><i class="fas fa-user-shield"></i></div>
+                <div><span>Admins activos</span><strong>{{ total_admins }}</strong></div>
+            </article>
+        </section>
+
+        <section class="admin-grid-two admin-reports-grid">
+            <article class="admin-panel-card admin-panel-card--elevated admin-report-card">
+                <div class="admin-section-head">
+                    <h2><i class="fas fa-users"></i> Reporte de usuarios</h2>
+                    <span class="admin-alert-pill admin-alert-pill--ok">Cuenta y actividad</span>
+                </div>
+                <p class="admin-chart-note">Incluye estado de cuenta, suspension, chats y volumen de mensajes por usuario.</p>
+                <ul class="admin-report-features">
+                    <li>Identificacion completa por usuario</li>
+                    <li>Estado actual de la cuenta</li>
+                    <li>Metricas de uso del chat</li>
+                </ul>
+                <div class="admin-report-actions">
+                    <button class="admin-btn" type="button" onclick="previewReport('usuarios', this)">
+                        <i class="fas fa-eye"></i> Vista previa
+                    </button>
+                    <button class="admin-btn primary" type="button" onclick="exportAdminPdf('usuarios', this)">
                         <i class="fas fa-file-pdf"></i> Exportar PDF
                     </button>
-                    <a class="admin-btn" href="{{ url_for('admin_export_users_xlsx') }}">
+                    <a class="admin-btn" href="{{ url_for('admin_export_users_xlsx') }}" onclick="trackReportExport('usuarios','xlsx')">
                         <i class="fas fa-file-excel"></i> Excel (.xlsx)
                     </a>
                 </div>
             </article>
 
-            <article class="admin-panel-card">
-                <h2>Auditoria admin</h2>
-                <p style="color: var(--muted);">Incluye acciones administrativas con actor y detalle.</p>
-                <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <button class="admin-btn primary" type="button" onclick="exportAdminPdf('auditoria')">
+            <article class="admin-panel-card admin-panel-card--elevated admin-report-card">
+                <div class="admin-section-head">
+                    <h2><i class="fas fa-clipboard-list"></i> Reporte de auditoria</h2>
+                    <span class="admin-alert-pill admin-alert-pill--warn">Trazabilidad admin</span>
+                </div>
+                <p class="admin-chart-note">Incluye actor, accion, severidad, request ID y detalle tecnico de cada evento.</p>
+                <ul class="admin-report-features">
+                    <li>Linea de tiempo administrativa</li>
+                    <li>Correlacion por request ID</li>
+                    <li>Datos operativos para auditoria</li>
+                </ul>
+                <div class="admin-report-actions">
+                    <button class="admin-btn" type="button" onclick="previewReport('auditoria', this)">
+                        <i class="fas fa-eye"></i> Vista previa
+                    </button>
+                    <button class="admin-btn primary" type="button" onclick="exportAdminPdf('auditoria', this)">
                         <i class="fas fa-file-pdf"></i> Exportar PDF
                     </button>
-                    <a class="admin-btn" href="{{ url_for('admin_export_audit_xlsx') }}">
+                    <a class="admin-btn" href="{{ url_for('admin_export_audit_xlsx') }}" onclick="trackReportExport('auditoria','xlsx')">
                         <i class="fas fa-file-excel"></i> Excel (.xlsx)
                     </a>
                 </div>
             </article>
 
-            <article class="admin-panel-card">
-                <h2>Seguridad</h2>
-                <p style="color: var(--muted);">Intentos de login, reset por IP y rate limits.</p>
-                <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <button class="admin-btn primary" type="button" onclick="exportAdminPdf('seguridad')">
+            <article class="admin-panel-card admin-panel-card--elevated admin-report-card">
+                <div class="admin-section-head">
+                    <h2><i class="fas fa-lock"></i> Reporte de seguridad</h2>
+                    <span class="admin-alert-pill admin-alert-pill--off">Riesgo y bloqueo</span>
+                </div>
+                <p class="admin-chart-note">Incluye intentos de login, reset por IP y rate limits con estado de bloqueo.</p>
+                <ul class="admin-report-features">
+                    <li>IPs y correos con intentos fallidos</li>
+                    <li>Ventanas de bloqueo y desbloqueo</li>
+                    <li>Controles de limite de peticiones</li>
+                </ul>
+                <div class="admin-report-actions">
+                    <button class="admin-btn" type="button" onclick="previewReport('seguridad', this)">
+                        <i class="fas fa-eye"></i> Vista previa
+                    </button>
+                    <button class="admin-btn primary" type="button" onclick="exportAdminPdf('seguridad', this)">
                         <i class="fas fa-file-pdf"></i> Exportar PDF
                     </button>
-                    <a class="admin-btn" href="{{ url_for('admin_export_login_attempts_xlsx') }}">
+                    <a class="admin-btn" href="{{ url_for('admin_export_login_attempts_xlsx') }}" onclick="trackReportExport('seguridad','xlsx')">
                         <i class="fas fa-file-excel"></i> Excel (.xlsx)
                     </a>
                 </div>
             </article>
+        </section>
+
+        <section class="admin-panel-card admin-panel-card--elevated">
+            <div class="admin-section-head">
+                <h2>Historial reciente de exportaciones</h2>
+                <button class="admin-btn" type="button" onclick="refreshReportHistory(this)">
+                    <i class="fas fa-rotate"></i> Actualizar
+                </button>
+            </div>
+            <div class="admin-report-history-wrap">
+                <table class="admin-report-history-table">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Actor</th>
+                            <th>Modulo</th>
+                            <th>Formato</th>
+                            <th>Estado</th>
+                            <th>IP</th>
+                            <th>Detalle</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reportsHistoryBody">
+                        {% if report_history %}
+                            {% for item in report_history %}
+                            <tr>
+                                <td>{{ item.at_human }}</td>
+                                <td>{{ item.actor_email }}</td>
+                                <td>{{ item.module }}</td>
+                                <td>{{ item.format }}</td>
+                                <td>
+                                    <span class="status-pill {{ 'ok' if item.status == 'ok' else ('off' if item.status == 'error' else 'warn') }}">
+                                        {{ item.status_text }}
+                                    </span>
+                                </td>
+                                <td>{{ item.ip }}</td>
+                                <td>{{ item.detail }}</td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                        <tr><td colspan="7">Sin exportaciones registradas.</td></tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
         </section>
     </div>
 
+    <div id="reportPreviewModal" class="admin-modal" aria-hidden="true">
+        <div class="admin-modal-content admin-modal-content--wide">
+            <div class="admin-modal-header">
+                <h3 id="reportPreviewTitle">Vista previa</h3>
+                <button type="button" class="admin-btn" onclick="closePreviewModal()">Cerrar</button>
+            </div>
+            <div id="reportPreviewBody" class="admin-modal-body"></div>
+        </div>
+    </div>
+
+    <div id="adminToastHost" class="admin-toast-host"></div>
+
     <script>
+        const REPORT_CONFIG = {
+            usuarios: {
+                label: "Usuarios",
+                jsonEndpoint: "/admin/export/usuarios.json",
+                xlsxEndpoint: "{{ url_for('admin_export_users_xlsx') }}"
+            },
+            auditoria: {
+                label: "Auditoria",
+                jsonEndpoint: "/admin/export/auditoria.json",
+                xlsxEndpoint: "{{ url_for('admin_export_audit_xlsx') }}"
+            },
+            seguridad: {
+                label: "Seguridad",
+                jsonEndpoint: "/admin/export/seguridad.json",
+                xlsxEndpoint: "{{ url_for('admin_export_login_attempts_xlsx') }}"
+            }
+        };
+        const REPORT_HISTORY_URL = "{{ url_for('admin_reports_history_json') }}";
+        const previewCache = {};
+
         function escapeHtml(value) {
             return String(value ?? "").replace(/[&<>"']/g, function(ch){
-                return ({
-                    "&": "&amp;",
-                    "<": "&lt;",
-                    ">": "&gt;",
-                    "\"": "&quot;",
-                    "'": "&#39;"
-                })[ch];
+                return ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;" })[ch];
             });
+        }
+
+        function formatLocalDate(value) {
+            try {
+                return new Date(value).toLocaleString("es-ES");
+            } catch (_err) {
+                return String(value || "-");
+            }
+        }
+
+        function showToast(message, tone) {
+            const host = document.getElementById("adminToastHost");
+            if (!host) return;
+            const toast = document.createElement("div");
+            toast.className = "admin-toast admin-toast--" + (tone || "success");
+            toast.textContent = message;
+            host.appendChild(toast);
+            requestAnimationFrame(() => toast.classList.add("show"));
+            setTimeout(() => {
+                toast.classList.remove("show");
+                setTimeout(() => toast.remove(), 220);
+            }, 2600);
+        }
+
+        function setRuntimeStatus(text) {
+            const el = document.getElementById("reportsRuntimeStatus");
+            if (el) el.textContent = text || "Listo";
+        }
+
+        function updateLastExportPill(items) {
+            const pill = document.getElementById("reportsLastExport");
+            if (!pill) return;
+            const list = Array.isArray(items) ? items : [];
+            if (!list.length) {
+                pill.textContent = "Sin registro";
+                return;
+            }
+            const last = list[0];
+            pill.textContent = last.at_human || formatLocalDate(last.at_iso) || "Sin registro";
+        }
+
+        function renderReportHistory(items) {
+            const body = document.getElementById("reportsHistoryBody");
+            if (!body) return;
+            const history = Array.isArray(items) ? items : [];
+            if (!history.length) {
+                body.innerHTML = '<tr><td colspan="7">Sin exportaciones registradas.</td></tr>';
+                return;
+            }
+            body.innerHTML = history.map(item => {
+                const tone = item.status === "ok" ? "ok" : (item.status === "error" ? "off" : "warn");
+                const badge = '<span class="status-pill ' + tone + '">' + escapeHtml(item.status_text || "Estado") + '</span>';
+                return (
+                    '<tr>' +
+                    '<td>' + escapeHtml(item.at_human || formatLocalDate(item.at_iso)) + '</td>' +
+                    '<td>' + escapeHtml(item.actor_email || "-") + '</td>' +
+                    '<td>' + escapeHtml(item.module || "-") + '</td>' +
+                    '<td>' + escapeHtml(item.format || "-") + '</td>' +
+                    '<td>' + badge + '</td>' +
+                    '<td>' + escapeHtml(item.ip || "-") + '</td>' +
+                    '<td>' + escapeHtml(item.detail || "-") + '</td>' +
+                    '</tr>'
+                );
+            }).join("");
+        }
+
+        async function refreshReportHistory(btn, silent) {
+            setButtonBusy(btn, true, "Actualizando...");
+            setRuntimeStatus("Actualizando");
+            try {
+                const res = await fetch(REPORT_HISTORY_URL, { method: "GET", cache: "no-store" });
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                    throw new Error(data.error || "No se pudo cargar historial.");
+                }
+                const items = Array.isArray(data.items) ? data.items : [];
+                renderReportHistory(items);
+                updateLastExportPill(items);
+            } catch (err) {
+                if (!silent) {
+                    showToast(err.message || "No se pudo actualizar historial.", "error");
+                }
+            } finally {
+                setButtonBusy(btn, false);
+                setRuntimeStatus("Listo");
+            }
+        }
+
+        function setButtonBusy(btn, busy, busyLabel) {
+            if (!btn) return;
+            if (busy) {
+                btn.dataset.originalLabel = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + escapeHtml(busyLabel || "Procesando...");
+            } else {
+                btn.disabled = false;
+                if (btn.dataset.originalLabel) {
+                    btn.innerHTML = btn.dataset.originalLabel;
+                    delete btn.dataset.originalLabel;
+                }
+            }
         }
 
         function showPreparingPopup(message) {
             const popup = window.open("", "_blank");
             if (!popup) return null;
             popup.document.open();
-            popup.document.write('<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Preparando PDF...</title><style>body{font-family:Segoe UI,system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;height:100vh;margin:0}.card{border:1px solid #334155;border-radius:12px;padding:18px;background:#1e293b}</style></head><body><div class="card">' + escapeHtml(message) + '</div></body></html>');
+            popup.document.write(
+                '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Preparando PDF...</title>' +
+                '<style>body{font-family:Segoe UI,system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;height:100vh;margin:0}.card{border:1px solid #334155;border-radius:12px;padding:18px;background:#1e293b}</style>' +
+                '</head><body><div class="card">' + escapeHtml(message) + '</div></body></html>'
+            );
             popup.document.close();
             return popup;
         }
@@ -118,115 +384,188 @@
                     return '<tr>' + cells.map(v => '<td>' + escapeHtml(v) + '</td>').join('') + '</tr>';
                 }).join('');
                 const sectionClass = idx > 0 ? 'report-section page-break' : 'report-section';
-                return `
-                    <section class="${sectionClass}">
-                        <h2>${escapeHtml(sec.title || 'Seccion')}</h2>
-                        <div class="table-wrap">
-                            <table>
-                                <thead><tr>${head}</tr></thead>
-                                <tbody>${body || '<tr><td colspan="' + Math.max(columns.length, 1) + '">Sin datos</td></tr>'}</tbody>
-                            </table>
-                        </div>
-                    </section>
-                `;
+                return (
+                    '<section class="' + sectionClass + '">' +
+                    '<h2>' + escapeHtml(sec.title || 'Seccion') + '</h2>' +
+                    '<div class="table-wrap"><table><thead><tr>' + head + '</tr></thead>' +
+                    '<tbody>' + (body || ('<tr><td colspan="' + Math.max(columns.length, 1) + '">Sin datos</td></tr>')) + '</tbody></table></div>' +
+                    '</section>'
+                );
             }).join('');
 
-            return `<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${escapeHtml(payload.title || 'Reporte')}</title>
-    <style>
-        :root { --bg:#f8fafc; --card:#ffffff; --text:#0f172a; --muted:#475569; --border:#dbe5f1; --accent:#0ea5e9; }
-        * { box-sizing: border-box; }
-        body { font-family:"Segoe UI",system-ui,sans-serif; margin:0; background:var(--bg); color:var(--text); padding:24px; }
-        .sheet { border:1px solid #d5e2ef; border-radius:16px; background:#fff; padding:18px; box-shadow:0 12px 28px rgba(15,23,42,.08); }
-        .brand { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
-        .brand-left { display:flex; align-items:center; gap:10px; color:#0284c7; font-weight:800; letter-spacing:.2px; }
-        .mark { width:26px; height:26px; border-radius:999px; background:#e0f2fe; border:1px solid #bae6fd; display:grid; place-items:center; color:#0369a1; font-size:13px; }
-        h1 { margin:0 0 8px; font-size:1.45rem; }
-        .meta { color:var(--muted); margin-bottom:14px; }
-        .report-section { margin-top:14px; page-break-inside:avoid; }
-        .report-section h2 { margin:0 0 8px; font-size:1.1rem; }
-        .table-wrap { border:1px solid var(--border); border-radius:10px; overflow:hidden; }
-        table { width:100%; border-collapse:collapse; table-layout:fixed; }
-        th, td {
-            border:1px solid var(--border);
-            padding:8px 10px;
-            text-align:left;
-            vertical-align:top;
-            white-space:normal;
-            word-break:break-word;
-            overflow-wrap:anywhere;
-            font-size:12px;
-        }
-        th { background:#f1f5f9; font-weight:700; }
-        .pdf-watermark { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) rotate(-24deg); opacity:.08; font-size:48px; font-weight:800; color:#0f172a; pointer-events:none; white-space:nowrap; }
-        .pdf-footer { position:fixed; bottom:8px; right:12px; font-size:11px; color:#64748b; }
-        .page-break { page-break-before: always; }
-        @media print {
-            @page { size:${pageSize}; margin:10mm; }
-            body { padding:0; }
-            .sheet { border:none; box-shadow:none; border-radius:0; padding:0; }
-        }
-    </style>
-</head>
-<body>
-    <div class="pdf-watermark">© 2026 Jonathan Loza</div>
-    <div class="pdf-footer">© 2026 Jonathan Loza · Nexus Academy</div>
-    <main class="sheet">
-        <div class="brand">
-            <div class="brand-left"><span class="mark">N</span> NEXUS ACADEMY</div>
-            <div style="color:#64748b;font-size:12px;">${escapeHtml(maxColumns >= 6 ? 'A4 Horizontal' : 'A4 Vertical')}</div>
-        </div>
-        <h1>${escapeHtml(payload.title || 'Reporte')}</h1>
-        <div class="meta">Exportado: ${escapeHtml(payload.generated_at || '')}</div>
-        ${sectionsHtml}
-    </main>
-    <script>
-        window.focus();
-        window.print();
-    <\/script>
-</body>
-</html>`;
+            return '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+                '<title>' + escapeHtml(payload.title || 'Reporte') + '</title>' +
+                '<style>' +
+                ':root { --bg:#f8fafc; --card:#ffffff; --text:#0f172a; --muted:#475569; --border:#dbe5f1; }' +
+                '* { box-sizing: border-box; }' +
+                'body { font-family:Segoe UI,system-ui,sans-serif; margin:0; background:var(--bg); color:var(--text); padding:24px; }' +
+                '.sheet { border:1px solid #d5e2ef; border-radius:16px; background:#fff; padding:18px; box-shadow:0 12px 28px rgba(15,23,42,.08); }' +
+                '.brand { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }' +
+                '.brand-left { display:flex; align-items:center; gap:10px; color:#0284c7; font-weight:800; letter-spacing:.2px; }' +
+                '.mark { width:26px; height:26px; border-radius:999px; background:#e0f2fe; border:1px solid #bae6fd; display:grid; place-items:center; color:#0369a1; font-size:13px; }' +
+                'h1 { margin:0 0 8px; font-size:1.45rem; }' +
+                '.meta { color:var(--muted); margin-bottom:14px; }' +
+                '.report-section { margin-top:14px; page-break-inside:avoid; }' +
+                '.report-section h2 { margin:0 0 8px; font-size:1.1rem; }' +
+                '.table-wrap { border:1px solid var(--border); border-radius:10px; overflow:hidden; }' +
+                'table { width:100%; border-collapse:collapse; table-layout:fixed; }' +
+                'th, td { border:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:top; white-space:normal; word-break:break-word; overflow-wrap:anywhere; font-size:12px; }' +
+                'th { background:#f1f5f9; font-weight:700; }' +
+                '.pdf-watermark { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) rotate(-24deg); opacity:.08; font-size:48px; font-weight:800; color:#0f172a; pointer-events:none; white-space:nowrap; }' +
+                '.pdf-footer { position:fixed; bottom:8px; right:12px; font-size:11px; color:#64748b; }' +
+                '.page-break { page-break-before:always; }' +
+                '@media print { @page { size:' + pageSize + '; margin:10mm; } body { padding:0; } .sheet { border:none; box-shadow:none; border-radius:0; padding:0; } }' +
+                '</style></head><body>' +
+                '<div class="pdf-watermark">(c) 2026 Jonathan Loza</div>' +
+                '<div class="pdf-footer">(c) 2026 Jonathan Loza - Nexus Academy</div>' +
+                '<main class="sheet"><div class="brand"><div class="brand-left"><span class="mark">N</span> NEXUS ACADEMY</div>' +
+                '<div style="color:#64748b;font-size:12px;">' + escapeHtml(maxColumns >= 6 ? 'A4 Horizontal' : 'A4 Vertical') + '</div></div>' +
+                '<h1>' + escapeHtml(payload.title || 'Reporte') + '</h1>' +
+                '<div class="meta">Exportado: ' + escapeHtml(payload.generated_at || '') + '</div>' +
+                sectionsHtml + '</main><script>window.focus();window.print();<\/script></body></html>';
         }
 
-        async function exportAdminPdf(type) {
-            const endpointMap = {
-                usuarios: "/admin/export/usuarios.json",
-                auditoria: "/admin/export/auditoria.json",
-                seguridad: "/admin/export/seguridad.json"
-            };
-            const labelMap = {
-                usuarios: "Preparando PDF de usuarios...",
-                auditoria: "Preparando PDF de auditoria...",
-                seguridad: "Preparando PDF de seguridad..."
-            };
-            const endpoint = endpointMap[type];
-            if (!endpoint) return;
+        async function fetchReportPayload(type, forceReload, purpose) {
+            const cfg = REPORT_CONFIG[type];
+            if (!cfg) throw new Error("Tipo de reporte no soportado.");
+            const mode = (purpose || "preview").toLowerCase();
+            if (!forceReload && mode === "preview" && previewCache[type]) return previewCache[type];
+            const qs = mode ? ("?purpose=" + encodeURIComponent(mode)) : "";
+            const res = await fetch(cfg.jsonEndpoint + qs, { method: "GET" });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || "No se pudo cargar la vista previa.");
+            }
+            if (mode === "preview") {
+                previewCache[type] = data;
+            }
+            return data;
+        }
 
-            const popup = showPreparingPopup(labelMap[type] || "Preparando PDF...");
+        function openPreviewModal(title, html) {
+            const modal = document.getElementById("reportPreviewModal");
+            const titleEl = document.getElementById("reportPreviewTitle");
+            const bodyEl = document.getElementById("reportPreviewBody");
+            if (!modal || !titleEl || !bodyEl) return;
+            titleEl.textContent = title;
+            bodyEl.innerHTML = html;
+            modal.classList.add("show");
+            modal.setAttribute("aria-hidden", "false");
+            document.body.classList.add("admin-modal-open");
+        }
+
+        function closePreviewModal() {
+            const modal = document.getElementById("reportPreviewModal");
+            if (!modal) return;
+            modal.classList.remove("show");
+            modal.setAttribute("aria-hidden", "true");
+            document.body.classList.remove("admin-modal-open");
+        }
+
+        async function previewReport(type, btn) {
+            const cfg = REPORT_CONFIG[type];
+            if (!cfg) return;
+            setButtonBusy(btn, true, "Cargando...");
+            setRuntimeStatus("Cargando");
+            try {
+                const data = await fetchReportPayload(type, false, "preview");
+                const sections = Array.isArray(data.sections) ? data.sections : [];
+                const totalRows = sections.reduce((acc, sec) => acc + ((sec.rows || []).length || 0), 0);
+                const summaryHtml =
+                    '<div class="admin-report-preview-stats">' +
+                    '<article class="admin-report-preview-stat"><span>Secciones</span><strong>' + sections.length + '</strong></article>' +
+                    '<article class="admin-report-preview-stat"><span>Filas totales</span><strong>' + totalRows + '</strong></article>' +
+                    '<article class="admin-report-preview-stat"><span>Generado</span><strong>' + escapeHtml(data.generated_at || "-") + '</strong></article>' +
+                    '</div>';
+
+                const sectionsHtml = sections.map(sec => {
+                    const columns = Array.isArray(sec.columns) ? sec.columns : [];
+                    const rows = Array.isArray(sec.rows) ? sec.rows : [];
+                    const previewRows = rows.slice(0, 5);
+                    const head = columns.map(c => '<th>' + escapeHtml(c) + '</th>').join("");
+                    const body = previewRows.map(r => {
+                        const cells = Array.isArray(r) ? r : [];
+                        return '<tr>' + cells.map(v => '<td>' + escapeHtml(v) + '</td>').join("") + '</tr>';
+                    }).join("");
+                    return (
+                        '<section class="admin-report-preview-section">' +
+                        '<div class="admin-section-head"><h4>' + escapeHtml(sec.title || "Seccion") + '</h4>' +
+                        '<span class="admin-alert-pill admin-alert-pill--ok">' + rows.length + ' filas</span></div>' +
+                        '<div class="admin-report-preview-table-wrap"><table class="admin-report-preview-table">' +
+                        '<thead><tr>' + head + '</tr></thead>' +
+                        '<tbody>' + (body || ('<tr><td colspan="' + Math.max(columns.length, 1) + '">Sin datos</td></tr>')) + '</tbody>' +
+                        '</table></div>' +
+                        (rows.length > 5 ? '<p class="admin-chart-note">Vista parcial: 5 de ' + rows.length + ' filas.</p>' : '') +
+                        '</section>'
+                    );
+                }).join("");
+
+                openPreviewModal("Vista previa - " + cfg.label, summaryHtml + sectionsHtml);
+            } catch (err) {
+                showToast(err.message || "No se pudo cargar la vista previa.", "error");
+            } finally {
+                setButtonBusy(btn, false);
+                setRuntimeStatus("Listo");
+            }
+        }
+
+        function trackReportExport(type, format, detail) {
+            const cfg = REPORT_CONFIG[type];
+            setRuntimeStatus("Exportando");
+            showToast("Exportacion " + (format || "").toUpperCase() + " iniciada para " + (cfg ? cfg.label : type) + ".", "success");
+            setTimeout(() => {
+                setRuntimeStatus("Listo");
+                refreshReportHistory();
+            }, 1400);
+        }
+
+        async function exportAdminPdf(type, btn) {
+            const cfg = REPORT_CONFIG[type];
+            if (!cfg) return;
+            const popup = showPreparingPopup("Preparando PDF de " + cfg.label + "...");
             if (!popup) {
-                alert("No se pudo abrir el exportador de PDF. Revisa el bloqueador de ventanas.");
+                showToast("No se pudo abrir la ventana de exportacion (bloqueador activo).", "error");
                 return;
             }
+            setButtonBusy(btn, true, "Generando PDF...");
+            setRuntimeStatus("Exportando");
             try {
-                const res = await fetch(endpoint, { method: "GET" });
-                const data = await res.json();
-                if (!res.ok || !data.success) {
-                    throw new Error(data.error || "No se pudo generar el reporte.");
-                }
+                const data = await fetchReportPayload(type, true, "export");
                 const html = buildAdminPdfHtml(data);
                 popup.document.open();
                 popup.document.write(html);
                 popup.document.close();
+                const sections = Array.isArray(data.sections) ? data.sections : [];
+                const totalRows = sections.reduce((acc, sec) => acc + ((sec.rows || []).length || 0), 0);
+                showToast("PDF generado para " + cfg.label + ".", "success");
+                refreshReportHistory();
             } catch (err) {
                 popup.document.open();
-                popup.document.write('<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Error</title><style>body{font-family:Segoe UI,system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;height:100vh;margin:0}.card{max-width:560px;border:1px solid #334155;border-radius:12px;padding:18px;background:#1e293b}</style></head><body><div class="card"><strong>No se pudo generar el PDF.</strong><br><br>' + escapeHtml(err.message || "Error desconocido") + '</div></body></html>');
+                popup.document.write(
+                    '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Error</title>' +
+                    '<style>body{font-family:Segoe UI,system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;height:100vh;margin:0}.card{max-width:560px;border:1px solid #334155;border-radius:12px;padding:18px;background:#1e293b}</style>' +
+                    '</head><body><div class="card"><strong>No se pudo generar el PDF.</strong><br><br>' + escapeHtml(err.message || "Error desconocido") + '</div></body></html>'
+                );
                 popup.document.close();
+                showToast("Fallo al generar PDF de " + cfg.label + ".", "error");
+            } finally {
+                setButtonBusy(btn, false);
+                setRuntimeStatus("Listo");
             }
         }
+
+        (function initReportsPage() {
+            refreshReportHistory(null, true);
+            const modal = document.getElementById("reportPreviewModal");
+            if (modal) {
+                modal.addEventListener("click", function(ev) {
+                    if (ev.target === modal) closePreviewModal();
+                });
+            }
+            document.addEventListener("keydown", function(ev) {
+                if (ev.key === "Escape") closePreviewModal();
+            });
+        })();
     </script>
 </body>
 </html>

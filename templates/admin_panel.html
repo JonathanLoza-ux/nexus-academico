@@ -27,6 +27,10 @@
                     <i class="fas fa-clock"></i>
                     Actualizado: <strong id="adminLastUpdated">--:--</strong>
                 </span>
+                <span class="admin-role-pill {% if admin_role == 'super_admin' %}admin-role-pill--super{% else %}admin-role-pill--admin{% endif %}">
+                    <i class="fas {% if admin_role == 'super_admin' %}fa-crown{% else %}fa-user-shield{% endif %}"></i>
+                    {% if admin_role == "super_admin" %}Super Admin{% else %}Admin{% endif %}
+                </span>
                 <a class="admin-btn" href="{{ url_for('home') }}"><i class="fas fa-arrow-left"></i> Volver al chat</a>
             </div>
         </header>
@@ -41,36 +45,88 @@
             {% endif %}
         {% endwith %}
 
+        <section class="admin-hero-card">
+            <div class="admin-hero-main">
+                <p class="admin-hero-kicker">Vista ejecutiva</p>
+                <h2>Monitoreo general de Nexus</h2>
+                <p>Control rapido de usuarios, seguridad y actividad administrativa desde un solo panel.</p>
+            </div>
+            <div class="admin-hero-meta">
+                <article class="admin-hero-chip">
+                    <i class="fas fa-users"></i>
+                    <div>
+                        <small>Usuarios</small>
+                        <strong>{{ total_users }}</strong>
+                    </div>
+                </article>
+                <article class="admin-hero-chip">
+                    <i class="fas fa-message"></i>
+                    <div>
+                        <small>Mensajes</small>
+                        <strong>{{ total_messages }}</strong>
+                    </div>
+                </article>
+                <article class="admin-hero-chip">
+                    <i class="fas fa-triangle-exclamation"></i>
+                    <div>
+                        <small>Alertas criticas</small>
+                        <strong>{{ alerts_payload.critical_count }}</strong>
+                    </div>
+                </article>
+            </div>
+        </section>
+
         <section class="admin-kpi-grid admin-kpi-grid--exec">
-            <article class="admin-kpi-card">
-                <span>Usuarios totales</span>
-                <strong>{{ total_users }}</strong>
+            <article class="admin-kpi-card admin-kpi-card--users">
+                <div class="admin-kpi-icon"><i class="fas fa-users"></i></div>
+                <div>
+                    <span>Usuarios totales</span>
+                    <strong>{{ total_users }}</strong>
+                </div>
             </article>
-            <article class="admin-kpi-card">
-                <span>Usuarios activos</span>
-                <strong>{{ account_status_values[0] if account_status_values|length > 0 else 0 }}</strong>
+            <article class="admin-kpi-card admin-kpi-card--ok">
+                <div class="admin-kpi-icon"><i class="fas fa-user-check"></i></div>
+                <div>
+                    <span>Usuarios activos</span>
+                    <strong>{{ account_status_values[0] if account_status_values|length > 0 else 0 }}</strong>
+                </div>
             </article>
-            <article class="admin-kpi-card">
-                <span>Usuarios desactivados</span>
-                <strong>{{ account_status_values[1] if account_status_values|length > 1 else 0 }}</strong>
+            <article class="admin-kpi-card admin-kpi-card--off">
+                <div class="admin-kpi-icon"><i class="fas fa-user-slash"></i></div>
+                <div>
+                    <span>Usuarios desactivados</span>
+                    <strong>{{ account_status_values[1] if account_status_values|length > 1 else 0 }}</strong>
+                </div>
             </article>
-            <article class="admin-kpi-card">
-                <span>Chats</span>
-                <strong>{{ total_chats }}</strong>
+            <article class="admin-kpi-card admin-kpi-card--chat">
+                <div class="admin-kpi-icon"><i class="fas fa-comments"></i></div>
+                <div>
+                    <span>Chats</span>
+                    <strong>{{ total_chats }}</strong>
+                </div>
             </article>
-            <article class="admin-kpi-card">
-                <span>Mensajes</span>
-                <strong>{{ total_messages }}</strong>
+            <article class="admin-kpi-card admin-kpi-card--msg">
+                <div class="admin-kpi-icon"><i class="fas fa-paper-plane"></i></div>
+                <div>
+                    <span>Mensajes</span>
+                    <strong>{{ total_messages }}</strong>
+                </div>
             </article>
-            <article class="admin-kpi-card">
-                <span>Admins activos</span>
-                <strong>{{ total_admins }}</strong>
+            <article class="admin-kpi-card admin-kpi-card--admin">
+                <div class="admin-kpi-icon"><i class="fas fa-user-shield"></i></div>
+                <div>
+                    <span>Admins activos</span>
+                    <strong>{{ total_admins }}</strong>
+                </div>
             </article>
         </section>
 
         <section class="admin-grid-two">
-            <article class="admin-panel-card">
-                <h2>Accesos rapidos</h2>
+            <article class="admin-panel-card admin-panel-card--elevated">
+                <div class="admin-section-head admin-section-head--stack">
+                    <h2>Accesos rapidos</h2>
+                    <p>Navegacion directa a los modulos de operacion.</p>
+                </div>
                 <div class="admin-quick-grid">
                     {% if 'view_users' in admin_permissions %}
                     <a class="admin-quick-card" href="{{ url_for('admin_users_page') }}">
@@ -105,8 +161,11 @@
                 </div>
             </article>
 
-            <article class="admin-panel-card">
-                <h2>Estado del sistema</h2>
+            <article class="admin-panel-card admin-panel-card--elevated">
+                <div class="admin-section-head admin-section-head--stack">
+                    <h2>Estado del sistema</h2>
+                    <p>Lectura rapida de estabilidad, sesiones y seguridad.</p>
+                </div>
                 <div class="admin-health-list">
                     {% for h in system_health %}
                     <div class="admin-health-item admin-health-item--{{ h.status }}">
@@ -121,7 +180,7 @@
             </article>
         </section>
 
-        <section class="admin-panel-card">
+        <section class="admin-panel-card admin-panel-card--elevated">
             <div class="admin-section-head">
                 <h2>Centro de actividad</h2>
                 {% if can_view_logs %}
@@ -153,7 +212,7 @@
             </div>
         </section>
 
-        <section class="admin-panel-card">
+        <section class="admin-panel-card admin-panel-card--elevated">
             <div class="admin-section-head">
                 <h2>Alertas en tiempo real</h2>
                 <span class="admin-update-pill">
@@ -184,7 +243,7 @@
         </section>
 
         <section class="admin-grid-two">
-            <article class="admin-panel-card">
+            <article class="admin-panel-card admin-panel-card--elevated">
                 <div class="admin-section-head">
                     <h2>Prioridades del turno</h2>
                     <button type="button" id="adminManualRefreshBtn" class="admin-btn">
@@ -207,8 +266,11 @@
                     {% endif %}
                 </div>
             </article>
-            <article class="admin-panel-card">
-                <h2>Acciones recomendadas</h2>
+            <article class="admin-panel-card admin-panel-card--elevated">
+                <div class="admin-section-head admin-section-head--stack">
+                    <h2>Acciones recomendadas</h2>
+                    <p>Atajos para resolver incidencias y tareas frecuentes.</p>
+                </div>
                 <div class="admin-actions-grid">
                     {% if 'view_users' in admin_permissions %}
                     <a class="admin-btn" href="{{ url_for('admin_users_page') }}"><i class="fas fa-users"></i> Revisar usuarios</a>
@@ -227,14 +289,14 @@
         </section>
 
         <section class="admin-grid-two">
-            <article class="admin-panel-card">
+            <article class="admin-panel-card admin-panel-card--elevated">
                 <h2>Top usuarios por chats</h2>
                 <p class="admin-chart-note">Muestra los 8 principales y agrupa el resto en "Otros".</p>
                 <div class="admin-chart-box">
                     <canvas id="adminTopChatsChart"></canvas>
                 </div>
             </article>
-            <article class="admin-panel-card">
+            <article class="admin-panel-card admin-panel-card--elevated">
                 <h2>Mensajes por dia (ultimos 7 dias)</h2>
                 <div class="admin-chart-box">
                     <canvas id="adminMessagesByDayChart"></canvas>
@@ -243,13 +305,13 @@
         </section>
 
         <section class="admin-grid-two">
-            <article class="admin-panel-card">
+            <article class="admin-panel-card admin-panel-card--elevated">
                 <h2>Cuentas activas vs desactivadas</h2>
                 <div class="admin-chart-box">
                     <canvas id="adminAccountStatusChart"></canvas>
                 </div>
             </article>
-            <article class="admin-panel-card">
+            <article class="admin-panel-card admin-panel-card--elevated">
                 <h2>Intentos fallidos por IP (top)</h2>
                 <div class="admin-chart-box">
                     <canvas id="adminFailedIpChart"></canvas>
