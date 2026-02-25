@@ -317,6 +317,7 @@ from models import (
     SavedMessage,
     AdminRole,
     AdminAuditLog,
+    AdminReportExportLog,
     SharedConversation,
     SharedViewerPresence,
     ResetRequest,
@@ -707,6 +708,9 @@ from utils.admin.admin_pages_service import (
 )
 from utils.admin.admin_reports_routes_service import (
     build_admin_reports_context as _build_admin_reports_context_core,
+    count_rows_from_report_payload as _count_rows_from_report_payload_core,
+    record_report_export_action as _record_report_export_action_core,
+    report_export_history_payload as _report_export_history_payload_core,
     export_users_xlsx_action as _export_users_xlsx_action_core,
     export_login_attempts_xlsx_action as _export_login_attempts_xlsx_action_core,
     export_audit_xlsx_action as _export_audit_xlsx_action_core,

@@ -69,6 +69,18 @@ class AdminAuditLog(db.Model):
     created_at = db.Column(db.DateTime, default=utcnow_naive, index=True)
 
 
+class AdminReportExportLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True, index=True)
+    report_module = db.Column(db.String(40), nullable=False, index=True)
+    export_format = db.Column(db.String(16), nullable=False, index=True)
+    status = db.Column(db.String(16), nullable=False, default='ok', index=True)
+    rows_count = db.Column(db.Integer, nullable=True)
+    detail = db.Column(db.String(255), nullable=True)
+    ip = db.Column(db.String(64), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow_naive, index=True)
+
+
 class SharedConversation(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     token = db.Column(db.String(64), unique=True, nullable=False, index=True)

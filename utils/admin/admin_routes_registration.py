@@ -39,6 +39,9 @@ def register_admin_routes(
     export_users_json_payload_action_fn,
     export_audit_json_payload_action_fn,
     export_security_json_payload_action_fn,
+    report_payload_rows_count_fn,
+    record_report_export_action_fn,
+    report_export_history_payload_fn,
     admin_grant_route_action_fn,
     admin_revoke_route_action_fn,
     admin_user_status_route_action_fn,
@@ -210,39 +213,95 @@ def register_admin_routes(
     def admin_reports_page():
         return render_template('admin_reports.html', **build_admin_reports_context_fn())
 
+    @app.route('/admin/reportes/historial.json')
+    @login_required
+    @admin_required(permission="export_reports")
+    def admin_reports_history_json():
+        return jsonify({
+            "success": True,
+            "items": report_export_history_payload_fn(limit=20),
+        })
+
     @app.route('/admin/export/usuarios.xlsx')
     @login_required
     @admin_required(permission="export_reports")
     def admin_export_users_xlsx():
-        return export_users_xlsx_action_fn()
+        response = export_users_xlsx_action_fn()
+        record_report_export_action_fn(
+            report_module="usuarios",
+            export_format="xlsx",
+            status="ok",
+            detail="Exportacion XLSX de usuarios",
+            rows_count=None,
+        )
+        return response
 
     @app.route('/admin/export/login_attempts.xlsx')
     @login_required
     @admin_required(permission="export_reports")
     def admin_export_login_attempts_xlsx():
-        return export_login_attempts_xlsx_action_fn()
+        response = export_login_attempts_xlsx_action_fn()
+        record_report_export_action_fn(
+            report_module="seguridad",
+            export_format="xlsx",
+            status="ok",
+            detail="Exportacion XLSX de seguridad",
+            rows_count=None,
+        )
+        return response
 
     @app.route('/admin/export/auditoria.xlsx')
     @login_required
     @admin_required(permission="export_reports")
     def admin_export_audit_xlsx():
-        return export_audit_xlsx_action_fn()
+        response = export_audit_xlsx_action_fn()
+        record_report_export_action_fn(
+            report_module="auditoria",
+            export_format="xlsx",
+            status="ok",
+            detail="Exportacion XLSX de auditoria",
+            rows_count=None,
+        )
+        return response
 
     @app.route('/admin/export/auditoria.csv')
     @login_required
     @admin_required(permission="export_reports")
     def admin_export_audit_csv():
-        return export_audit_csv_action_fn()
+        response = export_audit_csv_action_fn()
+        record_report_export_action_fn(
+            report_module="auditoria",
+            export_format="csv",
+            status="ok",
+            detail="Exportacion CSV de auditoria",
+            rows_count=None,
+        )
+        return response
 
     @app.route('/admin/export/auditoria.pdf')
     @login_required
     @admin_required(permission="export_reports")
     def admin_export_audit_pdf():
         try:
-            return export_audit_pdf_action_fn()
+            response = export_audit_pdf_action_fn()
+            record_report_export_action_fn(
+                report_module="auditoria",
+                export_format="pdf",
+                status="ok",
+                detail="Exportacion PDF de auditoria",
+                rows_count=None,
+            )
+            return response
         except RuntimeError as exc:
             if str(exc) != "reportlab_missing":
                 raise
+            record_report_export_action_fn(
+                report_module="auditoria",
+                export_format="pdf",
+                status="error",
+                detail="Fallo exportacion PDF: falta reportlab",
+                rows_count=None,
+            )
             flash("No se pudo generar PDF. Falta dependencia reportlab.", "error")
             return redirect(url_for("admin_logs_page"))
 
@@ -250,19 +309,52 @@ def register_admin_routes(
     @login_required
     @admin_required(permission="export_reports")
     def admin_export_users_json():
-        return jsonify(export_users_json_payload_action_fn())
+        payload = export_users_json_payload_action_fn()
+        purpose = (request.args.get("purpose") or "").strip().lower()
+        if purpose == "export":
+            rows_count = report_payload_rows_count_fn(payload)
+            record_report_export_action_fn(
+                report_module="usuarios",
+                export_format="pdf",
+                status="ok",
+                detail=f"Exportacion PDF de usuarios ({rows_count} filas)",
+                rows_count=rows_count,
+            )
+        return jsonify(payload)
 
     @app.route('/admin/export/auditoria.json')
     @login_required
     @admin_required(permission="export_reports")
     def admin_export_audit_json():
-        return jsonify(export_audit_json_payload_action_fn())
+        payload = export_audit_json_payload_action_fn()
+        purpose = (request.args.get("purpose") or "").strip().lower()
+        if purpose == "export":
+            rows_count = report_payload_rows_count_fn(payload)
+            record_report_export_action_fn(
+                report_module="auditoria",
+                export_format="pdf",
+                status="ok",
+                detail=f"Exportacion PDF de auditoria ({rows_count} filas)",
+                rows_count=rows_count,
+            )
+        return jsonify(payload)
 
     @app.route('/admin/export/seguridad.json')
     @login_required
     @admin_required(permission="export_reports")
     def admin_export_security_json():
-        return jsonify(export_security_json_payload_action_fn())
+        payload = export_security_json_payload_action_fn()
+        purpose = (request.args.get("purpose") or "").strip().lower()
+        if purpose == "export":
+            rows_count = report_payload_rows_count_fn(payload)
+            record_report_export_action_fn(
+                report_module="seguridad",
+                export_format="pdf",
+                status="ok",
+                detail=f"Exportacion PDF de seguridad ({rows_count} filas)",
+                rows_count=rows_count,
+            )
+        return jsonify(payload)
 
     @app.route('/admin/grant', methods=['POST'])
     @login_required
