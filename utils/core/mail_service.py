@@ -19,7 +19,7 @@ def build_reset_email_html(name: str, link: str, support_email: str, support_wha
 
       <div style="padding:22px 20px; text-align:center; border-bottom:1px solid #1f2a44;">
         <div style="font-size:30px; font-weight:900; letter-spacing:1px; color:#22d3ee;">NEXUS</div>
-        <div style="margin-top:6px; color:#94a3b8; font-size:13px;">Recuperacion de contrasena</div>
+        <div style="margin-top:6px; color:#94a3b8; font-size:13px;">Recuperaci&oacute;n de contrase&ntilde;a</div>
 
         <div style="margin-top:14px;">
           <span style="
@@ -32,7 +32,7 @@ def build_reset_email_html(name: str, link: str, support_email: str, support_wha
             font-size:12px;
             font-weight:700;
           ">
-            Enlace valido por <span style="color:#7dd3fc; font-weight:900;">20 minutos</span>
+            Enlace v&aacute;lido por <span style="color:#7dd3fc; font-weight:900;">20 minutos</span>
           </span>
         </div>
       </div>
@@ -43,7 +43,7 @@ def build_reset_email_html(name: str, link: str, support_email: str, support_wha
         </p>
 
         <p style="margin:0 0 16px 0; font-size:14px; color:#cbd5e1; line-height:1.65;">
-          Recibimos una solicitud para restablecer tu contrasena. Si fuiste tu, presiona el boton:
+          Recibimos una solicitud para restablecer tu contrase&ntilde;a. Si fuiste t&uacute;, presiona el bot&oacute;n:
         </p>
 
         <div style="text-align:center; margin:18px 0 14px 0;">
@@ -58,17 +58,17 @@ def build_reset_email_html(name: str, link: str, support_email: str, support_wha
             font-size:14px;
             box-shadow:0 10px 22px rgba(34,211,238,.20);
           ">
-            Restablecer contrasena
+            Restablecer contrase&ntilde;a
           </a>
         </div>
 
         <p style="margin:0; font-size:12.5px; color:#94a3b8; line-height:1.6;">
-          Si tu no hiciste esta solicitud, puedes ignorar este correo.
+          Si t&uacute; no hiciste esta solicitud, puedes ignorar este correo.
         </p>
 
         <div style="margin-top:18px; padding-top:16px; border-top:1px solid #1f2a44;">
           <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">
-            Si el boton no funciona, copia y pega este enlace:
+            Si el bot&oacute;n no funciona, copia y pega este enlace:
           </div>
 
           <div style="
@@ -99,7 +99,7 @@ def build_reset_email_html(name: str, link: str, support_email: str, support_wha
           </div>
 
           <p style="margin:12px 0 12px 0; font-size:12.5px; color:#94a3b8; line-height:1.6;">
-            Este es un correo automatico. Si necesitas ayuda, contactanos:
+            Este es un correo autom&aacute;tico. Si necesitas ayuda, cont&aacute;ctanos:
           </p>
 
           <div style="text-align:center; margin:8px 0 2px 0;">
@@ -132,7 +132,7 @@ def build_reset_email_html(name: str, link: str, support_email: str, support_wha
           </div>
 
           <div style="text-align:center; color:#64748b; font-size:12px; margin-top:14px;">
-            ? 2026 Nexus ? Seguridad de cuenta
+            &copy; 2026 Nexus &bull; Seguridad de cuenta
           </div>
         </div>
 
@@ -157,6 +157,44 @@ def send_reset_link(
     support_whatsapp,
 ):
     clean_mode = (mode or "dev").strip().lower()
+    subject = "Recuperaci\u00f3n de contrase\u00f1a - Nexus"
+    text_body = f"""Hola {name},
+
+Recibimos una solicitud para restablecer tu contrase\u00f1a.
+Este enlace es v\u00e1lido por 20 minutos:
+
+{link}
+
+Si t\u00fa no hiciste esta solicitud, ignora este mensaje.
+
+---
+Soporte:
+Correo: {support_email}
+WhatsApp: https://wa.me/{support_whatsapp}
+"""
+    html_body = build_reset_email_html(
+        name=name,
+        link=link,
+        support_email=support_email,
+        support_whatsapp=support_whatsapp,
+    )
+
+    def _send_smtp(provider_label: str = "smtp") -> bool:
+        try:
+            msg = MailMessage(
+                subject=subject,
+                recipients=[email],
+            )
+            msg.reply_to = support_email
+            msg.body = text_body
+            msg.html = html_body
+            mail_client.send(msg)
+            log_event_fn("EMAIL_SENT", provider=provider_label, to=email, ok=True)
+            return True
+        except Exception as smtp_err:
+            print("Error enviando correo SMTP:", repr(smtp_err))
+            log_event_fn("EMAIL_SENT", provider=provider_label, to=email, ok=False, error=str(smtp_err))
+            return False
 
     if clean_mode == "dev":
         print("\n==============================")
@@ -167,28 +205,6 @@ def send_reset_link(
 
     if clean_mode == "brevo_api":
         try:
-            subject = "Recuperacion de contrasena - Nexus"
-            text_body = f"""Hola {name},
-
-Recibimos una solicitud para restablecer tu contrasena.
-Este enlace es valido por 20 minutos:
-
-{link}
-
-Si tu no hiciste esta solicitud, ignora este mensaje.
-
----
-Soporte:
-Correo: {support_email}
-WhatsApp: https://wa.me/{support_whatsapp}
-"""
-            html_body = build_reset_email_html(
-                name=name,
-                link=link,
-                support_email=support_email,
-                support_whatsapp=support_whatsapp,
-            )
-
             url = "https://api.brevo.com/v3/smtp/email"
             headers = {
                 "accept": "application/json",
@@ -204,54 +220,28 @@ WhatsApp: https://wa.me/{support_whatsapp}
                 "replyTo": {"email": support_email, "name": "Soporte Nexus"},
             }
 
-            r = requests.post(url, headers=headers, json=payload, timeout=10)
+            # Timeout mas amplio para API externa.
+            r = requests.post(url, headers=headers, json=payload, timeout=20)
 
             if 200 <= r.status_code < 300:
                 log_event_fn("EMAIL_SENT", provider="brevo_api", to=email, ok=True, status=r.status_code)
                 return True
 
             print("Error Brevo API:", r.status_code, r.text)
-            print("LINK RESET (FALLBACK):", link)
             log_event_fn("EMAIL_SENT", provider="brevo_api", to=email, ok=False, status=r.status_code)
-            return False
 
         except Exception as e:
             print("Exception Brevo API:", repr(e))
-            print("LINK RESET (FALLBACK):", link)
             log_event_fn("EMAIL_SENT", provider="brevo_api", to=email, ok=False, error=str(e))
-            return False
 
-    try:
-        msg = MailMessage(
-            subject="Recuperacion de contrasena - Nexus",
-            recipients=[email],
-        )
+        print("Intentando fallback SMTP...")
+        if _send_smtp(provider_label="smtp_fallback"):
+            return True
+        print("LINK RESET (FALLBACK):", link)
+        return False
 
-        msg.reply_to = support_email
-
-        msg.body = f"""Hola {name},
-
-Recibimos una solicitud para restablecer tu contrasena.
-Este enlace es valido por 20 minutos:
-
-{link}
-
-Si tu no hiciste esta solicitud, ignora este mensaje.
-"""
-
-        msg.html = build_reset_email_html(
-            name=name,
-            link=link,
-            support_email=support_email,
-            support_whatsapp=support_whatsapp,
-        )
-
-        mail_client.send(msg)
-        log_event_fn("EMAIL_SENT", provider="smtp", to=email, ok=True)
+    if _send_smtp(provider_label="smtp"):
         return True
 
-    except Exception as e:
-        print("Error enviando correo (SMTP/Brevo):", repr(e))
-        print("LINK RESET (FALLBACK DEV):", link)
-        log_event_fn("EMAIL_SENT", provider="smtp", to=email, ok=False, error=str(e))
-        return True
+    print("LINK RESET (FALLBACK DEV):", link)
+    return False
